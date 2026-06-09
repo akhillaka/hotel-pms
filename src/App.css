@@ -1,0 +1,230 @@
+/* ============================================================
+   HOTEL PMS – COMPONENT STYLES
+   ============================================================ */
+
+/* ── Dashboard layout ── */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+/* ── Booking card (mobile responsive) ── */
+@media (max-width: 768px) {
+  .guest-booking-card {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ── Folio grid ── */
+.folio-profile-grid {
+  display: grid;
+  grid-template-columns: 2.2fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 1024px) {
+  .folio-profile-grid { grid-template-columns: 1fr; }
+}
+
+.folio-header-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1.5px solid var(--border);
+  padding-bottom: 16px;
+  margin-bottom: 20px;
+}
+
+.billing-block-card {
+  padding: 16px;
+  border-radius: var(--r-md);
+  border: 1.5px solid var(--border);
+  background: var(--bg-main);
+}
+
+/* ── Page header block ── */
+.page-header {
+  margin-bottom: 24px;
+}
+
+.page-header h1 {
+  font-size: 1.65rem;
+  font-weight: 800;
+  color: var(--text-main);
+  letter-spacing: -0.4px;
+}
+
+.page-header p {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  margin-top: 2px;
+}
+
+/* ── Metric / KPI cards ── */
+.kpi-card {
+  background: var(--bg-card);
+  border-radius: var(--r-lg);
+  padding: 20px 22px;
+  border: 1.5px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transition: all 0.2s var(--ease);
+}
+
+.kpi-card:hover {
+  box-shadow: var(--shadow-sm);
+  border-color: #c7d2fe;
+}
+
+.kpi-icon-wrap {
+  width: 44px; height: 44px;
+  border-radius: var(--r-md);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+.kpi-card .kpi-value {
+  font-size: 1.6rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-card .kpi-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+
+/* ── Maintenance ticket card ── */
+.maintenance-ticket {
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border-radius: var(--r-md);
+  border-left: 3px solid var(--danger);
+  border-top: 1.5px solid var(--border);
+  border-right: 1.5px solid var(--border);
+  border-bottom: 1.5px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  transition: box-shadow 0.2s var(--ease);
+}
+
+.maintenance-ticket:hover { box-shadow: var(--shadow-sm); }
+
+/* ── Glass table ── */
+.glass-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.glass-table thead tr {
+  border-bottom: 2px solid var(--border);
+}
+
+.glass-table thead th {
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.glass-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s var(--ease);
+}
+
+.glass-table tbody tr:hover { background: #f8fafc; }
+
+.glass-table tbody td {
+  padding: 11px 12px;
+}
+
+/* ── Print invoice rules ── */
+.print-only { display: none; }
+
+@media print {
+  body { background: white; color: black; }
+  .no-print  { display: none !important; }
+  .print-only { display: block !important; }
+}
+
+/* ── Developer console ── */
+.developer-console {
+  position: fixed;
+  bottom: 80px;
+  right: 20px;
+  width: 380px;
+  height: 500px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid #cbd5e1;
+  border-radius: var(--r-lg);
+}
+
+/* ── Loading skeleton ── */
+.skeleton {
+  background: linear-gradient(90deg, #e5e9f0 25%, #f0f2f7 50%, #e5e9f0 75%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease infinite;
+  border-radius: var(--r-sm);
+}
+
+@keyframes shimmer {
+  0%   { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ── Scrollable tab strip (mobile) ── */
+@media (max-width: 768px) {
+  .tab-strip {
+    gap: 0;
+    margin-bottom: 16px;
+  }
+  .tab-item {
+    padding: 10px 12px;
+    font-size: 0.8rem;
+  }
+}
+
+/* ── Form section ── */
+.form-section-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  margin-top: 4px;
+}
+
+/* ── Room grid responsive ── */
+@media (max-width: 480px) {
+  .room-grid {
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  }
+}
+
+/* ── Stat card row responsive ── */
+@media (max-width: 480px) {
+  .stat-card-row {
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 8px;
+  }
+  .stat-block .count { font-size: 1.5rem; }
+}
