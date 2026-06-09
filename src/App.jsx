@@ -161,23 +161,23 @@ export default function App() {
 
       {isMobile ? (
         /* ── MOBILE LAYOUT ── */
-        <div style={{ background: '#f0f2f7', minHeight: '100vh' }}>
+        <div style={{ background: 'var(--bg-main)', minHeight: '100vh' }}>
 
           {/* Mobile sticky header */}
           <div className="mobile-header no-print">
             <div className="mobile-header-brand">
-              <div className="mobile-header-icon">🏨</div>
+              <div className="mobile-header-icon" style={{ color: '#fff' }}>🏨</div>
               <span className="mobile-header-title">PMS</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
                 {user.name} · {user.role}
               </span>
               <button
                 onClick={handleLogout}
-                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', padding: '4px' }}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
               >
-                <LogOut size={17} />
+                <LogOut size={16} />
               </button>
             </div>
           </div>
@@ -206,7 +206,7 @@ export default function App() {
 
       ) : (
         /* ── DESKTOP LAYOUT ── */
-        <div style={{ display: 'flex', minHeight: '100vh', background: '#f0f2f7' }}>
+        <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-main)' }}>
 
           {/* Sidebar */}
           <nav className="desktop-side-nav no-print" role="navigation" aria-label="Sidebar navigation">
