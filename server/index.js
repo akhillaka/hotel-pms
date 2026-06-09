@@ -518,6 +518,10 @@ app.patch('/api/rooms/:id/status', authenticateToken, (req, res) => {
     db.prepare('UPDATE rooms SET status = ? WHERE id = ?').run(status, req.params.id);
     logAudit(req.user.id, req.user.username, 'ROOM_STATUS_CHANGE', `${room.room_number}: ${room.status}`, `${room.room_number}: ${status}`);
 
+    if (status === 'Dirty') {
+      createHousekeepingTask(req.params.id, 'Manual status change to Dirty');
+    }
+
     res.json({ message: 'Room status updated successfully', status });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1003,6 +1007,7 @@ app.post('/api/reservations/:id/check-out', authenticateToken, async (req, res) 
 
     if (reservation.room_id) {
       db.prepare('UPDATE rooms SET status = "Dirty" WHERE id = ?').run(reservation.room_id);
+      createHousekeepingTask(reservation.room_id, 'Guest Checkout Cleaning');
     }
 
     const guest = db.prepare('SELECT * FROM guests WHERE id = ?').get(reservation.guest_id);

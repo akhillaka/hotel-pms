@@ -200,6 +200,7 @@ const defaultPerms = [
   { role: 'Admin', module: 'admin', access_level: 'edit' },
   { role: 'Admin', module: 'integrations', access_level: 'edit' },
   { role: 'Admin', module: 'audit', access_level: 'edit' },
+  { role: 'Admin', module: 'housekeeping', access_level: 'edit' },
 
   // Manager
   { role: 'Manager', module: 'dashboard', access_level: 'edit' },
@@ -211,6 +212,7 @@ const defaultPerms = [
   { role: 'Manager', module: 'admin', access_level: 'edit' },
   { role: 'Manager', module: 'integrations', access_level: 'edit' },
   { role: 'Manager', module: 'audit', access_level: 'edit' },
+  { role: 'Manager', module: 'housekeeping', access_level: 'edit' },
 
   // Receptionist
   { role: 'Receptionist', module: 'dashboard', access_level: 'read' },
@@ -222,6 +224,7 @@ const defaultPerms = [
   { role: 'Receptionist', module: 'admin', access_level: 'disabled' },
   { role: 'Receptionist', module: 'integrations', access_level: 'disabled' },
   { role: 'Receptionist', module: 'audit', access_level: 'disabled' },
+  { role: 'Receptionist', module: 'housekeeping', access_level: 'read' },
 
   // Housekeeping
   { role: 'Housekeeping', module: 'dashboard', access_level: 'disabled' },
@@ -232,7 +235,8 @@ const defaultPerms = [
   { role: 'Housekeeping', module: 'reports', access_level: 'disabled' },
   { role: 'Housekeeping', module: 'admin', access_level: 'disabled' },
   { role: 'Housekeeping', module: 'integrations', access_level: 'disabled' },
-  { role: 'Housekeeping', module: 'audit', access_level: 'disabled' }
+  { role: 'Housekeeping', module: 'audit', access_level: 'disabled' },
+  { role: 'Housekeeping', module: 'housekeeping', access_level: 'edit' }
 ];
 
 const insertPerm = db.prepare('INSERT OR IGNORE INTO role_permissions (role, module, access_level) VALUES (?, ?, ?)');

@@ -12,7 +12,8 @@ import {
   FileSearch,
   LogOut,
   Hotel,
-  Plug
+  Plug,
+  Sparkles
 } from 'lucide-react';
 
 import './App.css';
@@ -28,14 +29,16 @@ import Reports from './views/Reports';
 import Admin from './views/Admin';
 import Audit from './views/Audit';
 import Integrations from './views/Integrations';
+import Housekeeping from './views/Housekeeping';
 
 const NAV_ITEMS = [
-  { id: 'dashboard', label: 'Dashboard',      Icon: LayoutDashboard },
-  { id: 'rooms',     label: 'Room Board',      Icon: Bed             },
-  { id: 'guests',    label: 'Guests',          Icon: Users           },
-  { id: 'billing',   label: 'Folio / Billing', Icon: FileText        },
-  { id: 'chat',      label: 'Comms',           Icon: MessageSquare   },
-  { id: 'reports',   label: 'Reports',         Icon: TrendingUp      },
+  { id: 'dashboard',    label: 'Dashboard',      Icon: LayoutDashboard },
+  { id: 'rooms',        label: 'Room Board',      Icon: Bed             },
+  { id: 'housekeeping', label: 'Housekeeping',  Icon: Sparkles        },
+  { id: 'guests',       label: 'Guests',          Icon: Users           },
+  { id: 'billing',      label: 'Folio / Billing', Icon: FileText        },
+  { id: 'chat',         label: 'Comms',           Icon: MessageSquare   },
+  { id: 'reports',      label: 'Reports',         Icon: TrendingUp      },
 ];
 
 const ADMIN_ITEMS = [
@@ -118,8 +121,9 @@ export default function App() {
   const renderView = () => {
     switch (activeView) {
       case 'dashboard': return <Dashboard onViewFolio={handleViewFolioFromDashboard} />;
-      case 'rooms':     return <RoomBoard user={user} permission={getPermission('rooms')} />;
-      case 'guests':    return <Guests user={user} permission={getPermission('guests')} />;
+      case 'rooms':        return <RoomBoard user={user} permission={getPermission('rooms')} />;
+      case 'housekeeping': return <Housekeeping user={user} />;
+      case 'guests':       return <Guests user={user} permission={getPermission('guests')} />;
       case 'billing':   return (
         <Billing
           user={user}
@@ -185,7 +189,7 @@ export default function App() {
 
           {/* Bottom nav bar */}
           <nav className="mobile-nav-bar no-print" role="navigation" aria-label="Main navigation">
-            {NAV_ITEMS.filter(item => hasAccess(item.id)).slice(0, 5).map(({ id, label, Icon }) => (
+            {NAV_ITEMS.filter(item => hasAccess(item.id)).slice(0, 6).map(({ id, label, Icon }) => (
               <button
                 key={id}
                 onClick={() => navigate(id)}
