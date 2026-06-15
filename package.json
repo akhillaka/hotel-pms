@@ -4,11 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "concurrently \"npm run server\" \"vite\"",
-    "server": "node server/index.js",
+    "start": "npm run backend",
+    "dev": "concurrently \"npm run backend\" \"vite\"",
+    "backend": "cd backend && php artisan serve --host=0.0.0.0 --port=8000",
     "build": "vite build",
-    "migrate": "node migrate_mysql.cjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run"
