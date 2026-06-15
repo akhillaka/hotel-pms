@@ -3,7 +3,7 @@ import axios from 'axios';
 import {
   Search, AlertOctagon, History, Ban, CheckCircle,
   Phone, User, Calendar, Star, TrendingUp, Clock,
-  X, ChevronRight, BedDouble, ShieldOff, Shield, RefreshCw
+  X, ChevronRight, BedDouble, ShieldOff, Shield, RefreshCw, Camera
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -101,39 +101,33 @@ export default function Guests({ user, permission }) {
   const lastStay     = stays.find(s => s.status === 'Checked Out');
 
   return (
-    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div className="anim-fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
       {/* ── Header ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+      <div className="page-header">
         <div>
-          <h1 style={{ fontSize: '1.65rem', fontWeight: 800, letterSpacing: '-0.4px' }}>Guest CRM</h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.855rem', marginTop: '2px' }}>
-            Guest directory, stay history & blacklist registry
-          </p>
+          <h1 className="page-title">Guest CRM</h1>
+          <p className="page-subtitle">Guest directory, stay history &amp; blacklist registry</p>
         </div>
-        <button onClick={fetchGuests} className="glass-btn" style={{ gap: '6px' }}>
-          <RefreshCw size={14} /> Refresh
+        <button onClick={fetchGuests} className="btn btn-default btn-sm">
+          <RefreshCw size={13} /> Refresh
         </button>
       </div>
 
       {/* ── Search bar ── */}
-      <div style={{
-        background: '#fff', border: '1.5px solid var(--border)',
-        borderRadius: 'var(--r-lg)', padding: '14px 18px',
-        display: 'flex', gap: '12px', alignItems: 'center',
-      }}>
-        <div style={{ position: 'relative', flex: 1 }}>
-          <Search size={15} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+      <div className="filter-bar">
+        <div className="search-wrap" style={{ flex: 1 }}>
+          <Search size={14} className="search-icon" />
           <input
             type="search"
             placeholder="Search by name or mobile number…"
-            className="glass-input"
-            style={{ paddingLeft: '34px' }}
+            className="input"
+            style={{ paddingLeft: 32 }}
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
           />
         </div>
-        <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: '0.75rem', color: 'var(--text-faint)', whiteSpace: 'nowrap', marginLeft: 'auto' }}>
           {guests.length} guest{guests.length !== 1 ? 's' : ''}
         </span>
       </div>
@@ -251,6 +245,7 @@ export default function Guests({ user, permission }) {
             <div style={{ display: 'flex', borderBottom: '1.5px solid var(--border)' }}>
               {[
                 { id: 'stays',     icon: <History size={14}/>,    label: 'Stay History' },
+                { id: 'documents', icon: <Camera size={14}/>,     label: 'Documents & IDs' },
                 { id: 'blacklist', icon: <AlertOctagon size={14}/>, label: 'Blacklist'  },
               ].map(t => (
                 <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
@@ -327,6 +322,36 @@ export default function Guests({ user, permission }) {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* ── Documents tab ── */}
+              {activeTab === 'documents' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }} className="animate-fade-in">
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Verified ID documents scanned and logged during check-in.
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                    <div style={{ border: '2px dashed var(--border)', borderRadius: 'var(--r-md)', padding: '20px', textAlign: 'center', background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '160px' }}>
+                      <Camera size={24} style={{ color: 'var(--text-faint)', marginBottom: '8px' }} />
+                      <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-2)' }}>ID Front Photo</div>
+                      {selectedGuest.id_front_url ? (
+                        <img src={selectedGuest.id_front_url} alt="ID Front" style={{ maxWidth: '100%', maxHeight: '100px', borderRadius: '4px', marginTop: '10px', objectFit: 'contain' }} />
+                      ) : (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: '4px' }}>No front document scan found</div>
+                      )}
+                    </div>
+                    
+                    <div style={{ border: '2px dashed var(--border)', borderRadius: 'var(--r-md)', padding: '20px', textAlign: 'center', background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '160px' }}>
+                      <Camera size={24} style={{ color: 'var(--text-faint)', marginBottom: '8px' }} />
+                      <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-2)' }}>ID Back Photo</div>
+                      {selectedGuest.id_back_url ? (
+                        <img src={selectedGuest.id_back_url} alt="ID Back" style={{ maxWidth: '100%', maxHeight: '100px', borderRadius: '4px', marginTop: '10px', objectFit: 'contain' }} />
+                      ) : (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-faint)', marginTop: '4px' }}>No back document scan found</div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 

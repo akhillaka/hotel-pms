@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { ShieldAlert, FileSearch, Check, RefreshCw, Search, Filter, Clock, User, Activity } from 'lucide-react';
 import toast from 'react-hot-toast';
+import CustomSelect from '../components/CustomSelect';
 
 const ACTION_COLORS = {
   RESERVATION_CREATE: '#6366f1',
@@ -81,50 +82,47 @@ export default function Audit() {
     <div className="animate-fade-in" style={{ display:'flex', flexDirection:'column', gap:'20px' }}>
 
       {/* Header */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', flexWrap:'wrap', gap:'12px' }}>
+      <div className="page-header">
         <div>
-          <h1 style={{ fontSize:'1.65rem', fontWeight:800, letterSpacing:'-0.4px' }}>Audit & Compliance Ledger</h1>
-          <p style={{ color:'var(--text-muted)', fontSize:'0.855rem', marginTop:'2px' }}>
-            Immutable log of all system events, overrides and changes
-          </p>
+          <h1 className="page-title">Audit &amp; Compliance Ledger</h1>
+          <p className="page-subtitle">Immutable log of all system events, overrides and changes</p>
         </div>
-        <button onClick={fetchLogs} className="glass-btn" style={{ gap:'6px', height:'38px' }}>
-          <RefreshCw size={14} /> Refresh
+        <button onClick={fetchLogs} className="btn btn-default btn-sm">
+          <RefreshCw size={13} /> Refresh
         </button>
       </div>
 
-      {/* KPI pills */}
+      {/* KPI stat tiles */}
       <div style={{ display:'flex', gap:'10px', flexWrap:'wrap' }}>
         {[
-          { label:'Total Events', value: logs.length, icon: <Activity size={14} />, color:'#6366f1' },
-          { label:'Unique Actors', value: actors.length - 1, icon: <User size={14} />, color:'#0284c7' },
-          { label:'Today', value: logs.filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString()).length, icon: <Clock size={14} />, color:'#059669' },
+          { label:'Total Events',  value: logs.length,              color:'var(--brand-600)' },
+          { label:'Unique Actors', value: actors.length - 1,        color:'#0284c7'          },
+          { label:'Today',         value: logs.filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString()).length, color:'#059669' },
         ].map(k => (
-          <div key={k.label} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'8px 16px', background:'#fff', borderRadius:'var(--r-sm)', border:'1.5px solid var(--border)', fontSize:'0.82rem' }}>
-            <span style={{ color:k.color }}>{k.icon}</span>
-            <span style={{ fontWeight:800, color:k.color }}>{k.value}</span>
+          <div key={k.label} style={{ display:'flex', alignItems:'center', gap:'8px', padding:'8px 16px', background:'var(--surface)', borderRadius:'var(--r-md)', border:'1px solid var(--border)', fontSize:'0.82rem' }}>
+            <span style={{ fontWeight:800, color:k.color, fontSize:'1rem' }}>{k.value}</span>
             <span style={{ color:'var(--text-muted)' }}>{k.label}</span>
           </div>
         ))}
       </div>
 
       {/* Filters */}
-      <div style={{ display:'flex', gap:'10px', flexWrap:'wrap' }}>
-        <div style={{ flex:1, minWidth:'220px', position:'relative' }}>
-          <Search size={15} style={{ position:'absolute', left:11, top:'50%', transform:'translateY(-50%)', color:'var(--text-muted)' }} />
+      <div className="filter-bar">
+        <div className="search-wrap" style={{ flex:1, minWidth:'200px' }}>
+          <Search size={14} className="search-icon" />
           <input
-            className="glass-input"
+            className="input"
             placeholder="Search events, users, values…"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            style={{ paddingLeft:'34px' }}
+            style={{ paddingLeft:32 }}
           />
         </div>
-        <div style={{ position:'relative', minWidth:'180px' }}>
-          <Filter size={14} style={{ position:'absolute', left:11, top:'50%', transform:'translateY(-50%)', color:'var(--text-muted)', pointerEvents:'none' }} />
-          <select className="glass-input" value={filter} onChange={e => setFilter(e.target.value)} style={{ paddingLeft:'32px' }}>
+        <div style={{ position:'relative', minWidth:'160px' }}>
+          <Filter size={13} style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:'var(--text-muted)', pointerEvents:'none' }} />
+          <CustomSelect className="input" value={filter} onChange={e => setFilter(e.target.value)} style={{ paddingLeft:'30px' }}>
             {actors.map(a => <option key={a} value={a}>{a === 'All' ? 'All Actors' : a}</option>)}
-          </select>
+          </CustomSelect>
         </div>
       </div>
 

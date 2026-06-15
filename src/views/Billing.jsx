@@ -6,6 +6,8 @@ import {
   LogOut, ShieldAlert, Image as ImageIcon, PlusCircle, History, Camera, CheckCircle2, Pencil
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import CustomSelect from '../components/CustomSelect';
+import BookingForm from '../components/BookingForm';
 
 export default function Billing({ user, permission, preselectedRes, onClearPreselected }) {
   const [reservations, setReservations] = useState([]);
@@ -21,22 +23,88 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
 
   // Tab State inside Folio View
   const [activeFolioTab, setActiveFolioTab] = useState('Summary');
+  const [splitFolioBEntries, setSplitFolioBEntries] = useState({});
+  const [selectedFolioGroup, setSelectedFolioGroup] = useState('A');
+  const [paymentLinkData, setPaymentLinkData] = useState(null);
+  const [generatingLink, setGeneratingLink] = useState(false);
+
+  // Deposits & Refunds State variables
+  const [depositAmount, setDepositAmount] = useState('');
+  const [depositMethod, setDepositMethod] = useState('UPI');
+  const [depositDesc, setDepositDesc] = useState('');
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundMethod, setRefundMethod] = useState('UPI');
+  const [refundReason, setRefundReason] = useState('');
+
+  // Load split folios on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('pms_split_folios');
+      if (saved) setSplitFolioBEntries(JSON.parse(saved));
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const toggleSplitEntry = (folioId, entryId) => {
+    setSplitFolioBEntries(prev => {
+      const current = prev[folioId] || [];
+      const next = current.includes(entryId)
+        ? current.filter(id => id !== entryId)
+        : [...current, entryId];
+      const updated = { ...prev, [folioId]: next };
+      localStorage.setItem('pms_split_folios', JSON.stringify(updated));
+      return updated;
+    });
+    toast.success('Folio entry split group updated');
+  };
 
   // Walk-In / New Booking form toggler & state
   const [showWalkInForm, setShowWalkInForm] = useState(false);
   const [walkInName, setWalkInName] = useState('');
   const [walkInMobile, setWalkInMobile] = useState('');
+  const getTodayDateTimeStr = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T12:00`;
+  };
+  const getTomorrowDateTimeStr = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T11:00`;
+  };
+
   const [walkInStayType, setWalkInStayType] = useState('hourly');
   const [walkInRoomTypeId, setWalkInRoomTypeId] = useState('');
   const [walkInRatePlanId, setWalkInRatePlanId] = useState('');
-  const [walkInCheckIn, setWalkInCheckIn] = useState('');
-  const [walkInCheckOut, setWalkInCheckOut] = useState('');
+  const [walkInCheckIn, setWalkInCheckIn] = useState(getTodayDateTimeStr);
+  const [walkInCheckOut, setWalkInCheckOut] = useState(getTomorrowDateTimeStr);
   const [walkInAdults, setWalkInAdults] = useState(1);
   const [walkInChildren, setWalkInChildren] = useState(0);
   const [walkInRemarks, setWalkInRemarks] = useState('');
   const [walkInCustomRate, setWalkInCustomRate] = useState('');
   const [walkInAutoCheckIn, setWalkInAutoCheckIn] = useState(true);
   const [walkInRoomId, setWalkInRoomId] = useState('');
+  const [walkInAvailableRooms, setWalkInAvailableRooms] = useState([]);
+
+  useEffect(() => {
+    const fetchAvailableRooms = async () => {
+      if (!walkInRoomTypeId || !walkInCheckIn || !walkInCheckOut) {
+        setWalkInAvailableRooms([]);
+        return;
+      }
+      try {
+        const token = localStorage.getItem('pms_token');
+        const res = await axios.get('/api/rooms/available', {
+          params: { room_type_id: walkInRoomTypeId, check_in: walkInCheckIn, check_out: walkInCheckOut },
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setWalkInAvailableRooms(res.data);
+      } catch (err) {
+        console.error('Failed to fetch walk-in available rooms', err);
+      }
+    };
+    fetchAvailableRooms();
+  }, [walkInRoomTypeId, walkInCheckIn, walkInCheckOut]);
 
   // Check-In Workspace Form States (for reservations not yet Checked In)
   const [selectedRoomId, setSelectedRoomId] = useState('');
@@ -127,9 +195,21 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
   // Listen to parent preselection triggers
   useEffect(() => {
     if (preselectedRes) {
-      openFolio(preselectedRes);
+      if (preselectedRes.guest_id) {
+        // Full object already provided
+        openFolio(preselectedRes);
+      } else if (reservations.length > 0) {
+        // Need to find full object in reservations array
+        const fullRes = reservations.find(r => r.id === preselectedRes.id);
+        if (fullRes) {
+          openFolio(fullRes);
+        } else {
+          toast.error('Reservation not found in records.');
+          onClearPreselected();
+        }
+      }
     }
-  }, [preselectedRes]);
+  }, [preselectedRes, reservations]);
 
   const openFolio = async (res) => {
     setSelectedRes(res);
@@ -138,7 +218,8 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
     setGuestHistory(null);
     setResAuditLogs([]);
     setAdjustEntry(null);
-    setAdjustReason('');
+    setSelectedFolioGroup('A');
+    setPaymentLinkData(null);
 
     // Reset check-in form fields
     setSelectedRoomId('');
@@ -173,11 +254,13 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
 
       // Audit logs are restricted to Admin/Manager — fetch separately so a 403 doesn't crash folio loading
       try {
+        const folioId = folioRes.data?.folio?.id;
         const auditRes = await axios.get('/api/audit', { headers: { Authorization: `Bearer ${token}` } });
         setResAuditLogs(
           auditRes.data.filter(log =>
             log.old_value?.includes(res.reservation_number) ||
-            log.new_value?.includes(res.reservation_number)
+            log.new_value?.includes(res.reservation_number) ||
+            (folioId && (log.old_value?.includes(folioId) || log.new_value?.includes(folioId)))
           )
         );
       } catch {
@@ -237,6 +320,9 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
       setWalkInName('');
       setWalkInMobile('');
       setWalkInCustomRate('');
+      setWalkInCheckIn(getTodayDateTimeStr());
+      setWalkInCheckOut(getTomorrowDateTimeStr());
+      setWalkInRoomId('');
       setShowWalkInForm(false);
       
       // Auto open newly created reservation
@@ -364,6 +450,52 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
     }
   };
 
+  const handlePostDeposit = async (e) => {
+    e.preventDefault();
+    if (permission === 'read') return toast.error('Permission Denied: Read-only access');
+    if (!depositAmount || parseFloat(depositAmount) <= 0) {
+      return toast.error('Please enter a valid deposit amount');
+    }
+    try {
+      const token = localStorage.getItem('pms_token');
+      await axios.post(`/api/folios/${folioData.folio.id}/deposit`, {
+        amount: parseFloat(depositAmount),
+        payment_method: depositMethod,
+        description: depositDesc || 'Security Deposit'
+      }, { headers: { Authorization: `Bearer ${token}` } });
+
+      toast.success('Security deposit collected successfully');
+      setDepositAmount('');
+      setDepositDesc('');
+      openFolio(selectedRes);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to collect deposit');
+    }
+  };
+
+  const handleRequestRefund = async (e) => {
+    e.preventDefault();
+    if (permission === 'read') return toast.error('Permission Denied: Read-only access');
+    if (!refundAmount || parseFloat(refundAmount) <= 0 || !refundReason) {
+      return toast.error('Please fill in all refund fields');
+    }
+    try {
+      const token = localStorage.getItem('pms_token');
+      await axios.post(`/api/folios/${folioData.folio.id}/refund`, {
+        amount: parseFloat(refundAmount),
+        payment_method: refundMethod,
+        reason: refundReason
+      }, { headers: { Authorization: `Bearer ${token}` } });
+
+      toast.success('Refund request submitted successfully');
+      setRefundAmount('');
+      setRefundReason('');
+      openFolio(selectedRes);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to request refund');
+    }
+  };
+
   const handleAdjustReversal = async (e) => {
     e.preventDefault();
     if (permission === 'read') return toast.error('Permission Denied: Read-only access');
@@ -413,18 +545,51 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
       const token = localStorage.getItem('pms_token');
       const balance = folioData.summary.balance;
       
-      if (balance > 0 && user.role === 'Receptionist' && !isOverrideActive) {
-        return toast.error(`Checkout Blocked: Outstanding balance of ₹${balance} remains. Requires manager PIN / override.`);
+      if (balance > 0 && user.role !== 'Admin') {
+        const confirmReq = window.confirm(`Checkout Blocked: Outstanding balance of ₹${balance} remains. Direct checkout is restricted to Admins. Would you like to raise an approval request to the Admin?`);
+        if (confirmReq) {
+          await axios.post('/api/approvals/request', {
+            type: 'CHECKOUT_WITH_BALANCE',
+            details: { reservation_id: selectedRes.id, balance: balance }
+          }, { headers: { Authorization: `Bearer ${token}` } });
+          toast.success('Approval request raised successfully!');
+        }
+        return;
       }
 
-      await axios.post(`/api/reservations/${selectedRes.id}/check-out`, {}, {
+      const res = await axios.post(`/api/reservations/${selectedRes.id}/check-out`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      toast.success('Check-Out processed successfully! Room set to Dirty.');
+      if (res.data.warning) {
+        toast(res.data.warning, { icon: '⚠️', duration: 6000 });
+      } else {
+        toast.success('Check-Out processed successfully! Room set to Dirty.');
+      }
       handleBack();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Check-Out failed');
+    }
+  };
+
+  const handleReopenFolio = async () => {
+    if (permission === 'read') return toast.error('Permission Denied: Read-only access');
+    if (!['Admin', 'Manager'].includes(user.role)) {
+      return toast.error('Permission Denied: Reopening folios is restricted to managers and administrators only.');
+    }
+    if (!window.confirm('Are you sure you want to reopen this closed folio and revert guest status to Checked In?')) return;
+    try {
+      const token = localStorage.getItem('pms_token');
+      await axios.post(`/api/folios/${folioData.folio.id}/reopen`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Folio reopened successfully!');
+      const updatedRes = { ...selectedRes, status: 'Checked In' };
+      setSelectedRes(updatedRes);
+      openFolio(updatedRes);
+      await syncAllData();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to reopen folio');
     }
   };
 
@@ -521,11 +686,19 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
 
   const handleVoidEntry = async (entryId) => {
     if (permission === 'read') return toast.error('Permission Denied: Read-only access');
+    
+    let pin = '';
+    if (user.role === 'Receptionist') {
+      pin = window.prompt('Compliance Warning: Voiding transactions requires Manager Approval PIN. Enter PIN:');
+      if (pin === null) return; // cancel
+      if (!pin) return toast.error('Manager Approval PIN is required');
+    }
+
     if (!window.confirm('Are you sure you want to void/cancel this transaction? This action is permanent.')) return;
 
     try {
       const token = localStorage.getItem('pms_token');
-      await axios.delete(`/api/folios/entries/${entryId}`, {
+      await axios.delete(`/api/folios/entries/${entryId}${pin ? `?pin=${pin}` : ''}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -540,6 +713,351 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
     setSelectedRes(null);
     if (onClearPreselected) onClearPreselected();
     syncAllData();
+  };
+
+  const handlePrintInvoice = () => {
+    if (!folioData || !selectedRes) return;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      return toast.error('Pop-up blocked! Please allow pop-ups to print the invoice.');
+    }
+
+    const isGstActive = propertySettings?.gstOption === 'Enter GST';
+    const taxRateDivisor = isGstActive ? 1.12 : 1.0;
+
+    const filteredEntries = folioData.entries.filter(entry => 
+      selectedFolioGroup === 'A' 
+        ? !(splitFolioBEntries[folioData.folio.id] || []).includes(entry.id) 
+        : (splitFolioBEntries[folioData.folio.id] || []).includes(entry.id)
+    );
+
+    const totalDebit = filteredEntries
+      .filter(e => e.entry_type === 'Charge' && !e.is_voided)
+      .reduce((sum, e) => sum + parseFloat(e.debit || 0), 0);
+    const totalNetDebit = filteredEntries
+      .filter(e => e.entry_type === 'Charge' && !e.is_voided)
+      .reduce((sum, e) => sum + parseFloat(e.debit || 0) / taxRateDivisor, 0);
+    const totalTaxDebit = totalDebit - totalNetDebit;
+
+    const totalCredit = filteredEntries
+      .filter(e => e.entry_type === 'Payment' && !e.is_voided)
+      .reduce((sum, e) => sum + parseFloat(e.credit || 0), 0);
+    const balance = totalDebit - totalCredit;
+
+    const invoiceNo = `INV-${selectedRes.reservation_number.replace('RES-', '')}-${selectedFolioGroup}`;
+    const invoiceDate = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const checkInDate = new Date(selectedRes.check_in_datetime).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const checkOutDate = new Date(selectedRes.check_out_datetime).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+    // Table rows HTML
+    const rowsHtml = filteredEntries.map((entry, index) => {
+      const entryDate = new Date(entry.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+      const isPayment = entry.entry_type === 'Payment';
+      const net = isPayment ? entry.credit : (entry.debit / taxRateDivisor);
+      const tax = isPayment ? 0 : (entry.debit - net);
+      const gross = isPayment ? entry.credit : entry.debit;
+      const sacCode = entry.charge_type === 'Room Charge' || entry.charge_type === 'Tariff' ? '996311' : '996331';
+
+      return `
+        <tr style="border-bottom: 1px solid #e2e8f0; font-size: 13px;">
+          <td style="padding: 10px; text-align: center;">${index + 1}</td>
+          <td style="padding: 10px;">${entryDate}</td>
+          <td style="padding: 10px;">${entry.description} ${entry.is_voided ? '<span style="color:#ef4444; font-weight:bold;">(VOIDED)</span>' : ''}</td>
+          <td style="padding: 10px; text-align: center; color: #64748b;">${isPayment ? '—' : sacCode}</td>
+          <td style="padding: 10px; text-align: center; text-transform: uppercase; font-weight: 600; color: ${isPayment ? '#059669' : '#1e293b'};">
+            ${isPayment ? 'Credit' : 'Debit'}
+          </td>
+          <td style="padding: 10px; text-align: right;">₹${parseFloat(net).toFixed(2)}</td>
+          <td style="padding: 10px; text-align: right; color: #64748b;">${isPayment ? '—' : '₹' + parseFloat(tax).toFixed(2)}</td>
+          <td style="padding: 10px; text-align: right; font-weight: 600;">₹${parseFloat(gross).toFixed(2)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const gstRowsHtml = isGstActive && totalTaxDebit > 0 ? `
+      <div style="display: flex; justify-content: space-between; font-size: 13px; color: #475569; padding: 4px 0;">
+        <span>CGST (6% Tax)</span>
+        <span>₹${parseFloat(totalTaxDebit / 2).toFixed(2)}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 13px; color: #475569; padding: 4px 0;">
+        <span>SGST (6% Tax)</span>
+        <span>₹${parseFloat(totalTaxDebit / 2).toFixed(2)}</span>
+      </div>
+    ` : `
+      <div style="display: flex; justify-content: space-between; font-size: 13px; color: #64748b; padding: 4px 0;">
+        <span>GST (Exempt)</span>
+        <span>₹0.00</span>
+      </div>
+    `;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Invoice - ${invoiceNo}</title>
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+            body {
+              font-family: 'Inter', sans-serif;
+              color: #1e293b;
+              background-color: #fff;
+              margin: 0;
+              padding: 40px;
+              line-height: 1.5;
+            }
+            .invoice-container {
+              max-width: 800px;
+              margin: 0 auto;
+            }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              border-bottom: 2px solid #e2e8f0;
+              padding-bottom: 20px;
+              margin-bottom: 24px;
+            }
+            .hotel-logo {
+              font-size: 24px;
+              font-weight: 800;
+              color: #0f172a;
+              letter-spacing: -0.5px;
+            }
+            .hotel-details {
+              font-size: 12px;
+              color: #64748b;
+              margin-top: 6px;
+              line-height: 1.4;
+            }
+            .invoice-title-block {
+              text-align: right;
+            }
+            .invoice-title {
+              font-size: 20px;
+              font-weight: 700;
+              text-transform: uppercase;
+              color: #4f46e5;
+              letter-spacing: 0.5px;
+              margin: 0 0 8px 0;
+            }
+            .invoice-meta {
+              font-size: 12px;
+              line-height: 1.6;
+            }
+            .info-grid {
+              display: grid;
+              grid-template-columns: repeat(3, 1fr);
+              gap: 20px;
+              background-color: #f8fafc;
+              border: 1px solid #e2e8f0;
+              border-radius: 8px;
+              padding: 16px;
+              margin-bottom: 30px;
+              font-size: 12px;
+            }
+            .info-section-title {
+              color: #475569;
+              font-weight: 700;
+              letter-spacing: 0.05em;
+              text-transform: uppercase;
+              margin-bottom: 6px;
+              display: block;
+            }
+            .table-header {
+              background-color: #f1f5f9;
+              font-weight: 700;
+              font-size: 11px;
+              text-transform: uppercase;
+              letter-spacing: 0.05em;
+              color: #475569;
+            }
+            .summary-container {
+              display: flex;
+              justify-content: flex-end;
+              margin-top: 30px;
+            }
+            .summary-box {
+              width: 320px;
+              border-top: 2px solid #e2e8f0;
+              padding-top: 12px;
+            }
+            .balance-card {
+              background-color: #fef2f2;
+              border: 1px solid #fecaca;
+              border-radius: 6px;
+              padding: 12px;
+              margin-top: 14px;
+              text-align: center;
+            }
+            .balance-title {
+              font-size: 11px;
+              font-weight: 700;
+              color: #991b1b;
+              text-transform: uppercase;
+              letter-spacing: 0.05em;
+            }
+            .balance-value {
+              font-size: 20px;
+              font-weight: 800;
+              color: #991b1b;
+              margin-top: 4px;
+            }
+            .footer-notes {
+              margin-top: 50px;
+              font-size: 11px;
+              color: #64748b;
+              line-height: 1.6;
+              border-top: 1px solid #e2e8f0;
+              padding-top: 16px;
+            }
+            .signature-block {
+              margin-top: 80px;
+              display: flex;
+              justify-content: space-between;
+              font-size: 12px;
+            }
+            .signature-line {
+              width: 200px;
+              border-top: 1.5px solid #475569;
+              margin-top: 40px;
+              text-align: center;
+              font-weight: 600;
+              color: #334155;
+            }
+            @media print {
+              body {
+                padding: 0;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="invoice-container">
+            <!-- HEADER -->
+            <div class="header" style="display: flex; align-items: center; justify-content: space-between;">
+              <div style="display: flex; align-items: center; gap: 14px;">
+                ${propertySettings?.logo_url ? `
+                  <img src="${propertySettings.logo_url}" alt="Hotel Logo" style="width: 50px; height: 50px; object-fit: contain; border-radius: 8px;" />
+                ` : `
+                  <span style="font-size: 24px;">🏨</span>
+                `}
+                <div>
+                  <div class="hotel-logo" style="font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px;">${propertySettings?.name || 'Grand Hotel PMS'}</div>
+                  <div class="hotel-details" style="font-size: 12px; color: #64748b; margin-top: 4px; line-height: 1.4;">
+                    ${propertySettings?.address ? propertySettings.address + '<br>' : ''}
+                    ${propertySettings?.contact1 ? 'Phone: ' + propertySettings.contact1 + (propertySettings.contact2 ? ' / ' + propertySettings.contact2 : '') + '<br>' : ''}
+                    ${propertySettings?.email ? 'Email: ' + propertySettings.email + '<br>' : ''}
+                    ${isGstActive && propertySettings?.gstNumber ? '<strong>GSTIN: ' + propertySettings.gstNumber + '</strong>' : ''}
+                  </div>
+                </div>
+              </div>
+              <div class="invoice-title-block">
+                <div class="invoice-title">Tax Invoice</div>
+                <div class="invoice-meta">
+                  <strong>Invoice No:</strong> ${invoiceNo}<br>
+                  <strong>Date:</strong> ${invoiceDate}<br>
+                  <strong>Folio Group:</strong> Folio ${selectedFolioGroup}<br>
+                  <strong>Res ID:</strong> #${selectedRes.reservation_number}
+                </div>
+              </div>
+            </div>
+
+            <!-- INFO GRID -->
+            <div class="info-grid">
+              <div>
+                <span class="info-section-title">GUEST INFORMATION</span>
+                <strong>Name:</strong> ${selectedRes.guest_name}<br>
+                <strong>Mobile:</strong> ${selectedRes.guest_mobile}<br>
+                <strong>Nationality:</strong> ${selectedRes.nationality || 'Indian'}
+              </div>
+              <div>
+                <span class="info-section-title">STAY SUMMARY</span>
+                <strong>Room:</strong> Room ${selectedRes.room_number || 'Unassigned'} (${selectedRes.room_type_name})<br>
+                <strong>Stay Type:</strong> ${selectedRes.stay_type?.toUpperCase()} Stay<br>
+                <strong>Duration:</strong> ${formatStayDuration(selectedRes.check_in_datetime, selectedRes.check_out_datetime)}
+              </div>
+              <div>
+                <span class="info-section-title">STAY DATES</span>
+                <strong>Check-In:</strong> ${checkInDate}<br>
+                <strong>Check-Out:</strong> ${checkOutDate}<br>
+                <strong>Guests:</strong> ${selectedRes.adults} Adults, ${selectedRes.children} Kids
+              </div>
+            </div>
+
+            <!-- ITEMS TABLE -->
+            <h3 style="font-size: 14px; font-weight: 700; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #334155;">Billing Summary</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+              <thead>
+                <tr class="table-header">
+                  <th style="padding: 10px; text-align: center; width: 40px;">#</th>
+                  <th style="padding: 10px; text-align: left; width: 80px;">Date</th>
+                  <th style="padding: 10px; text-align: left;">Description</th>
+                  <th style="padding: 10px; text-align: center; width: 80px;">SAC Code</th>
+                  <th style="padding: 10px; text-align: center; width: 70px;">Type</th>
+                  <th style="padding: 10px; text-align: right; width: 100px;">Net Amt</th>
+                  <th style="padding: 10px; text-align: right; width: 85px;">Tax</th>
+                  <th style="padding: 10px; text-align: right; width: 100px;">Gross Amt</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rowsHtml}
+              </tbody>
+            </table>
+
+            <!-- SUMMARY CONTAINER -->
+            <div class="summary-container">
+              <div class="summary-box">
+                <div style="display: flex; justify-content: space-between; font-size: 13px; color: #475569; padding: 4px 0;">
+                  <span>Subtotal (Excl. Tax)</span>
+                  <span>₹${parseFloat(totalNetDebit).toFixed(2)}</span>
+                </div>
+                ${gstRowsHtml}
+                <div style="display: flex; justify-content: space-between; font-size: 14px; font-weight: 700; border-top: 1px solid #e2e8f0; padding-top: 8px; margin-top: 4px;">
+                  <span>Total Charges (Gross)</span>
+                  <span>₹${parseFloat(totalDebit).toFixed(2)}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 13px; color: #059669; padding: 4px 0;">
+                  <span>Payments Received</span>
+                  <span>- ₹${parseFloat(totalCredit).toFixed(2)}</span>
+                </div>
+                
+                <div class="balance-card">
+                  <div class="balance-title">Balance Due</div>
+                  <div class="balance-value">₹${parseFloat(balance).toFixed(2)}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- SIGNATURE BLOCK -->
+            <div class="signature-block">
+              <div>
+                <div class="signature-line">Guest Signature</div>
+              </div>
+              <div>
+                <div class="signature-line">Authorized Signatory</div>
+              </div>
+            </div>
+
+            <!-- TERMS AND NOTES -->
+            <div class="footer-notes">
+              <strong>Terms & Conditions:</strong><br>
+              1. All disputes are subject to the exclusive jurisdiction of local courts.<br>
+              2. Standard checkout time is 12:00 PM. Extensions are subject to availability and surcharge.<br>
+              3. The hotel is not responsible for valuables left in guest rooms. Safe deposit boxes are available.<br>
+              <span style="display: block; text-align: center; margin-top: 20px; font-weight: 500; color: #94a3b8;">Thank you for choosing ${propertySettings?.name || 'us'}! Have a safe journey home.</span>
+            </div>
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    // Wait for content to load to trigger print dialog
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
   };
 
   const verifyManagerOverride = () => {
@@ -571,6 +1089,234 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
     return parts.join(' ');
   };
 
+  const renderSummaryTab = () => {
+    if (!folioData) return null;
+    const folioId = folioData?.folio?.id;
+    const splitIds = splitFolioBEntries[folioId] || [];
+    const filteredEntries = folioData.entries.filter(entry => 
+      selectedFolioGroup === 'A' ? !splitIds.includes(entry.id) : splitIds.includes(entry.id)
+    );
+
+    const isGstActive = propertySettings?.gstOption === 'Enter GST';
+    const taxRateDivisor = isGstActive ? 1.12 : 1.0;
+
+    const totalDebit = filteredEntries
+      .filter(e => e.entry_type === 'Charge' && !e.is_voided)
+      .reduce((sum, e) => sum + parseFloat(e.debit || 0), 0);
+    const totalNetDebit = filteredEntries
+      .filter(e => e.entry_type === 'Charge' && !e.is_voided)
+      .reduce((sum, e) => sum + parseFloat(e.debit || 0) / taxRateDivisor, 0);
+    const totalTaxDebit = totalDebit - totalNetDebit;
+
+    const totalCredit = filteredEntries
+      .filter(e => e.entry_type === 'Payment' && !e.is_voided)
+      .reduce((sum, e) => sum + parseFloat(e.credit || 0), 0);
+
+    const totalDeposits = filteredEntries
+      .filter(e => e.entry_type === 'Payment' && !e.is_voided && e.description.startsWith('Security Deposit (Held)'))
+      .reduce((sum, e) => sum + parseFloat(e.credit || 0), 0);
+
+    const totalRefunds = filteredEntries
+      .filter(e => e.entry_type === 'Adjustment' && !e.is_voided && e.description.startsWith('Refund Issued'))
+      .reduce((sum, e) => sum + parseFloat(e.debit || 0), 0);
+
+    const balance = totalDebit - totalCredit;
+
+    return (
+      <div className="glass-panel animate-fade-in" style={{ padding: '20px', background: '#fff' }}>
+        {/* Folio Split Selector Tabs */}
+        <div className="no-print" style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '1px solid var(--border)', paddingBottom: '10px' }}>
+          <button
+            onClick={() => setSelectedFolioGroup('A')}
+            className={`tab-item ${selectedFolioGroup === 'A' ? 'active' : ''}`}
+            style={{ fontSize: '0.8rem', padding: '6px 14px', border: 'none', background: 'transparent', cursor: 'pointer' }}
+          >
+            📁 Folio A (Main Bill)
+          </button>
+          <button
+            onClick={() => setSelectedFolioGroup('B')}
+            className={`tab-item ${selectedFolioGroup === 'B' ? 'active' : ''}`}
+            style={{ fontSize: '0.8rem', padding: '6px 14px', border: 'none', background: 'transparent', cursor: 'pointer' }}
+          >
+            📁 Folio B (Extras / Split Bill)
+          </button>
+        </div>
+
+        {/* PRINT HEADER VISIBLE ONLY ON PRINT */}
+        <div className="print-only" style={{ marginBottom: '30px', borderBottom: '2px solid #000', paddingBottom: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {propertySettings?.logo_url && (
+                <img src={propertySettings.logo_url} alt="Hotel Logo" style={{ width: '50px', height: '50px', objectFit: 'contain', borderRadius: '8px' }} />
+              )}
+              <div>
+                <h1 style={{ margin: '0', fontSize: '1.6rem', fontWeight: 'bold', color: '#1e293b' }}>{propertySettings?.name || 'Grand Hotel PMS'}</h1>
+                <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '4px', lineHeight: 1.4 }}>
+                  {propertySettings?.address && <>{propertySettings.address}<br/></>}
+                  {propertySettings?.contact1 && <>Phone: {propertySettings.contact1} {propertySettings.contact2 ? `/ ${propertySettings.contact2}` : ''}<br/></>}
+                  {propertySettings?.email && <>Email: {propertySettings.email}<br/></>}
+                  {propertySettings?.gstOption === 'Enter GST' && propertySettings.gstNumber && <><strong>GSTIN: {propertySettings.gstNumber}</strong><br/></>}
+                </div>
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', fontSize: '0.8rem', color: '#1e293b', lineHeight: 1.5 }}>
+              <h2 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', textTransform: 'uppercase', color: 'var(--brand-600)' }}>Tax Invoice</h2>
+              <strong>Folio Group:</strong> Folio {selectedFolioGroup}<br />
+              <strong>Invoice Date:</strong> {new Date().toLocaleDateString('en-IN')}<br />
+              <strong>Reservation ID:</strong> #{selectedRes.reservation_number}
+            </div>
+          </div>
+          
+          <div style={{ marginTop: '20px', padding: '12px', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', fontSize: '0.78rem' }}>
+            <div>
+              <span style={{ color: '#64748b', fontWeight: 600, display: 'block' }}>GUEST DETAILS</span>
+              <strong>{selectedRes.guest_name}</strong><br />
+              {selectedRes.guest_mobile}
+            </div>
+            <div>
+              <span style={{ color: '#64748b', fontWeight: 600, display: 'block' }}>ROOM & STAY</span>
+              <strong>Room {selectedRes.room_number || 'N/A'}</strong> ({selectedRes.room_type_name})<br />
+              {selectedRes.stay_type?.replace('_', ' ')} stay
+            </div>
+            <div>
+              <span style={{ color: '#64748b', fontWeight: 600, display: 'block' }}>DATES & COMPLIMENT</span>
+              {selectedRes.check_in_datetime.split(' ')[0]} to {selectedRes.check_out_datetime.split(' ')[0]}<br />
+              {selectedRes.adults} Adults, {selectedRes.children} Children
+            </div>
+          </div>
+        </div>
+
+        <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '16px' }}>Summary Details (Folio {selectedFolioGroup})</h3>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+          <thead>
+            <tr style={{ borderBottom: '1.5px solid #cbd5e1', textAlign: 'left', color: 'var(--text-muted)' }}>
+              <th style={{ padding: '10px' }}>DATE</th>
+              <th style={{ padding: '10px' }}>ROOM</th>
+              <th style={{ padding: '10px' }}>DESCRIPTION</th>
+              <th style={{ padding: '10px' }}>TYPE</th>
+              <th style={{ padding: '10px', textAlign: 'right' }}>NET</th>
+              <th style={{ padding: '10px', textAlign: 'right' }}>TAX</th>
+              <th style={{ padding: '10px', textAlign: 'right' }}>GROSS</th>
+              <th className="no-print" style={{ padding: '10px', textAlign: 'right' }}>SPLIT ACTION</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredEntries.map(entry => (
+              <tr key={entry.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                <td style={{ padding: '10px' }}>{new Date(entry.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}</td>
+                <td style={{ padding: '10px' }}>Room {selectedRes.room_number || 'N/A'}</td>
+                <td style={{ padding: '10px' }}>{entry.description}</td>
+                <td style={{ padding: '10px' }}>{entry.entry_type === 'Payment' ? 'CREDIT' : 'DEBIT'}</td>
+                <td style={{ padding: '10px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>₹{parseFloat(entry.entry_type === 'Payment' ? entry.credit : (entry.debit / taxRateDivisor)).toFixed(2)}</td>
+                <td style={{ padding: '10px', textAlign: 'right', color: 'var(--text-muted)' }}>{entry.entry_type === 'Payment' ? '—' : `₹${(entry.debit - (entry.debit / taxRateDivisor)).toFixed(2)}`}</td>
+                <td style={{ padding: '10px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 'bold' }}>
+                  ₹{parseFloat(entry.entry_type === 'Payment' ? entry.credit : entry.debit).toFixed(2)}
+                </td>
+                <td className="no-print" style={{ padding: '10px', textAlign: 'right' }}>
+                  <button
+                    onClick={() => toggleSplitEntry(folioId, entry.id)}
+                    className="btn btn-default btn-xs"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                  >
+                    {selectedFolioGroup === 'A' ? 'Move to B ➔' : '➔ Move to A'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {filteredEntries.length === 0 && (
+              <tr>
+                <td colSpan="8" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  No transactions in Folio {selectedFolioGroup}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '24px', borderTop: '2px solid #f1f5f9', paddingTop: '20px', marginTop: '20px' }}>
+          <div>
+            <h4 style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '10px' }}>Charges</h4>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', padding: '6px 0' }}>
+              <span>SUBTOTAL (EX. TAX)</span>
+              <strong>₹{parseFloat(totalNetDebit).toFixed(2)}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', padding: '6px 0', borderTop: '1px solid #f1f5f9' }}>
+              <span>{isGstActive ? 'GST (12% TAX)' : 'GST (EXEMPT)'}</span>
+              <strong>₹{parseFloat(totalTaxDebit).toFixed(2)}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', padding: '6px 0', borderTop: '1px solid #f1f5f9' }}>
+              <span>TOTAL CHARGES (GROSS)</span>
+              <strong>₹{parseFloat(totalDebit).toFixed(2)}</strong>
+            </div>
+          </div>
+
+          <div>
+            <h4 style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '10px' }}>Payments & Deposits</h4>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', padding: '6px 0' }}>
+              <span>PAYMENTS RECEIVED</span>
+              <strong className="text-success">₹{parseFloat(totalCredit).toFixed(2)}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', padding: '6px 0', borderTop: '1px solid #f1f5f9' }}>
+              <span>REFUNDS ISSUED</span>
+              <strong className="text-info">₹{parseFloat(totalRefunds).toFixed(2)}</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', padding: '6px 0', borderTop: '1px solid #f1f5f9' }}>
+              <span>DEPOSITS HELD</span>
+              <strong>₹{parseFloat(totalDeposits).toFixed(2)} <span style={{ fontSize: '0.65rem', color: '#b45309', background: '#fef3c7', padding: '1px 4px', borderRadius: '3px' }}>MASTER</span></strong>
+            </div>
+          </div>
+
+          <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#b91c1c', fontWeight: 'bold' }}>
+              <AlertTriangle size={14} /> BALANCE DUE (FOLIO {selectedFolioGroup})
+            </div>
+            <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#b91c1c', fontFamily: 'var(--font-mono)' }}>
+              ₹{parseFloat(balance).toFixed(2)}
+            </div>
+            <button 
+              onClick={() => setActiveFolioTab('Payments')}
+              className="glass-btn no-print" 
+              style={{ width: '100%', background: '#2563eb', color: '#fff', border: 'none', padding: '8px' }}
+            >
+              Collect payment <ChevronDown size={14} style={{ marginLeft: '4px' }} />
+            </button>
+          </div>
+        </div>
+
+        {/* PRINT SIGNATURE BLOCK */}
+        <div className="print-only" style={{ marginTop: '80px', display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+          <div style={{ textAlign: 'center', width: '200px' }}>
+            <div style={{ borderBottom: '1.5px solid #000', marginBottom: '8px', height: '40px' }} />
+            <strong>Guest Signature</strong>
+          </div>
+          <div style={{ textAlign: 'center', width: '200px' }}>
+            <div style={{ borderBottom: '1.5px solid #000', marginBottom: '8px', height: '40px' }} />
+            <strong>Authorized Signatory</strong>
+          </div>
+        </div>
+
+        {/* Extend stay block */}
+        <div className="no-print" style={{ borderTop: '1px solid #f1f5f9', paddingTop: '20px', marginTop: '20px' }}>
+          <h4 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '12px' }}>Extend Stay / Modify Checkout Date</h4>
+          <form onSubmit={handleModifyDates} style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 200px' }}>
+              <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>New Checkout Date & Time</label>
+              <input 
+                type="datetime-local" 
+                className="glass-input" 
+                value={newCheckOut ? newCheckOut.slice(0, 16) : ''} 
+                onChange={(e) => setNewCheckOut(e.target.value)} 
+              />
+            </div>
+            <button type="submit" className="glass-btn glass-btn-primary" style={{ padding: '10px 16px', height: '38px' }}>
+              Update Checkout Date
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
   const filteredReservations = reservations.filter(res => 
     res.guest_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     res.guest_mobile.includes(searchQuery) ||
@@ -583,108 +1329,34 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
       {/* NO SELECTED FOLIO: LIST GUESTS & EMBED NEW WALK-IN BUTTON */}
       {!selectedRes && (
         <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }} className="no-print">
+          <div className="page-header no-print">
             <div>
-              <h1 style={{ fontSize: '1.6rem', fontWeight: '800' }}>Property Folio Registry</h1>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Front desk check-ins, Walk-ins, and Billings statement manager</p>
+              <h1 className="page-title">Property Folio Registry</h1>
+              <p className="page-subtitle">Front desk check-ins, walk-ins &amp; billing management</p>
             </div>
-            <button 
-              onClick={() => setShowWalkInForm(!showWalkInForm)} 
-              className="glass-btn glass-btn-primary"
+            <button
+              onClick={() => setShowWalkInForm(!showWalkInForm)}
+              className="btn btn-primary btn-sm"
               disabled={permission === 'read'}
             >
-              <Plus size={16} /> New Walk-In Booking
+              <Plus size={15} /> New Walk-In
             </button>
           </div>
 
           {/* Inline Walk-In form */}
           {showWalkInForm && (
             <div className="glass-panel no-print animate-fade-in" style={{ padding: '24px', background: '#fff' }}>
-              <h2 style={{ fontSize: '1.1rem', fontWeight: 'bold', marginBottom: '16px' }}>Register Reservation / Walk-In</h2>
-              <form onSubmit={handleCreateWalkIn} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Guest Full Name *</label>
-                    <input type="text" className="glass-input" value={walkInName} onChange={(e) => setWalkInName(e.target.value)} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Mobile Phone Number *</label>
-                    <input type="tel" className="glass-input" value={walkInMobile} onChange={(e) => setWalkInMobile(e.target.value)} />
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Stay Type</label>
-                    <select className="glass-input" value={walkInStayType} onChange={(e) => setWalkInStayType(e.target.value)}>
-                      <option value="hourly">Hourly Stay</option>
-                      <option value="night">Night Stay</option>
-                      <option value="day_use">Day Use</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Room Type Category *</label>
-                    <select className="glass-input" value={walkInRoomTypeId} onChange={(e) => setWalkInRoomTypeId(e.target.value)}>
-                      <option value="">-- Choose Category --</option>
-                      {roomTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Rate Plan package *</label>
-                    <select className="glass-input" value={walkInRatePlanId} onChange={(e) => setWalkInRatePlanId(e.target.value)} disabled={!walkInRoomTypeId}>
-                      <option value="">-- Choose Package --</option>
-                      {ratePlans.filter(p => String(p.room_type_id) === String(walkInRoomTypeId)).map(p => {
-                        const displayPrice = walkInStayType === 'day_use'
-                          ? `₹${p.day_use_price}`
-                          : walkInStayType === 'hourly'
-                          ? 'Hourly Rates'
-                          : `₹${p.night_price}`;
-                        return <option key={p.id} value={p.id}>{p.name} — {displayPrice}</option>;
-                      })}
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Check-In Time *</label>
-                    <input type="datetime-local" className="glass-input" value={walkInCheckIn} onChange={(e) => setWalkInCheckIn(e.target.value)} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Check-Out Time *</label>
-                    <input type="datetime-local" className="glass-input" value={walkInCheckOut} onChange={(e) => setWalkInCheckOut(e.target.value)} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Custom Price Override (₹)</label>
-                    <input type="number" className="glass-input" placeholder="e.g. 1500" value={walkInCustomRate} onChange={(e) => setWalkInCustomRate(e.target.value)} />
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', alignItems: 'end', marginTop: '12px', padding: '12px', background: 'rgba(0,0,0,0.02)', borderRadius: '6px' }}>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                      <input type="checkbox" checked={walkInAutoCheckIn} onChange={(e) => setWalkInAutoCheckIn(e.target.checked)} />
-                      Auto Check-In
-                    </label>
-                  </div>
-                  {walkInAutoCheckIn && (
-                    <div>
-                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Assign Room (Required for Auto Check-In)</label>
-                      <select className="glass-input" value={walkInRoomId} onChange={(e) => setWalkInRoomId(e.target.value)}>
-                        <option value="">-- Select Vacant Room --</option>
-                        {rooms.filter(r => String(r.room_type_id) === String(walkInRoomTypeId) && r.status === 'Vacant Clean').map(r => (
-                          <option key={r.id} value={r.id}>Room {r.room_number} (Clean)</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
-                  <button type="button" onClick={() => setShowWalkInForm(false)} className="glass-btn">Cancel</button>
-                  <button type="submit" className="glass-btn glass-btn-primary" disabled={permission === 'read'}>Register Walk-in & Open Folio</button>
-                </div>
-              </form>
+              <BookingForm 
+                onCancel={() => setShowWalkInForm(false)}
+                onSuccess={() => {
+                  syncAllData();
+                  setShowWalkInForm(false);
+                }}
+                roomTypes={roomTypes}
+                ratePlans={ratePlans}
+                permission={permission}
+                defaultMode="walkin"
+              />
             </div>
           )}
 
@@ -832,12 +1504,12 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <div>
                     <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>ID Type</label>
-                    <select className="glass-input" value={idType} onChange={(e) => setIdType(e.target.value)}>
+                    <CustomSelect className="glass-input" value={idType} onChange={(e) => setIdType(e.target.value)}>
                       <option value="Aadhaar">Aadhaar Card</option>
                       <option value="Driving License">Driving License</option>
                       <option value="Passport">Passport</option>
                       <option value="Voter ID">Voter ID</option>
-                    </select>
+                    </CustomSelect>
                   </div>
                   <div>
                     <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>ID Number</label>
@@ -858,32 +1530,55 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                   </div>
                   <div>
                     <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Payment Mode</label>
-                    <select className="glass-input" value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)}>
+                    <CustomSelect className="glass-input" value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)}>
                       <option value="UPI">UPI QR Code</option>
                       <option value="Cash">Cash Drawer</option>
                       <option value="Card">Terminal POS</option>
                       <option value="Bank Transfer">Bank Wire</option>
-                    </select>
+                    </CustomSelect>
                   </div>
                 </div>
 
                 <div>
                   <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Assign Vacant Clean Room *</label>
-                  <select 
-                    className="glass-input" 
-                    value={selectedRoomId}
-                    onChange={(e) => setSelectedRoomId(e.target.value)}
-                  >
-                    <option value="">-- Choose Vacant Clean Room --</option>
-                    {rooms
-                      .filter(rm => rm.room_type_id === selectedRes.room_type_id && (rm.status === 'Vacant Clean' || user.role !== 'Receptionist' || isOverrideActive))
-                      .map(rm => (
-                        <option key={rm.id} value={rm.id}>
-                          Room {rm.room_number} (Floor {rm.floor} | {rm.status})
-                        </option>
-                      ))
+                  {(() => {
+                    const filteredVacantRooms = rooms.filter(rm => rm.room_type_id === selectedRes.room_type_id && (rm.status === 'Vacant Clean' || user.role !== 'Receptionist' || isOverrideActive));
+                    if (filteredVacantRooms.length === 0) {
+                      return (
+                        <div style={{ fontSize: '0.85rem', color: 'var(--danger)', padding: '10px', background: 'rgba(239, 68, 68, 0.05)', borderRadius: 'var(--r-sm)', border: '1px dashed var(--danger)' }}>
+                          No vacant rooms available for the selected category.
+                        </div>
+                      );
                     }
-                  </select>
+                    return (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '6px' }}>
+                        {filteredVacantRooms.map(rm => {
+                          const isSelected = selectedRoomId === rm.id;
+                          return (
+                            <button
+                              key={rm.id}
+                              type="button"
+                              onClick={() => setSelectedRoomId(rm.id)}
+                              style={{
+                                padding: '8px 14px',
+                                borderRadius: 'var(--r-md)',
+                                fontSize: '0.85rem',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                border: isSelected ? '1px solid var(--brand-600)' : '1px solid var(--border)',
+                                background: isSelected ? 'var(--brand-600)' : 'var(--surface-2)',
+                                color: isSelected ? '#fff' : 'var(--text)',
+                                boxShadow: isSelected ? 'var(--shadow-sm)' : 'none',
+                                transition: 'all 0.2s ease'
+                              }}
+                            >
+                              Room {rm.room_number} ({rm.status})
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <button type="submit" className="glass-btn glass-btn-primary" disabled={permission === 'read'} style={{ width: '100%' }}>
@@ -968,6 +1663,16 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                         Check-out <LogOut size={14} style={{ marginLeft: '4px' }} />
                       </button>
                     )}
+                    {selectedRes.status === 'Checked Out' && ['Admin', 'Manager'].includes(user.role) && (
+                      <button 
+                        onClick={handleReopenFolio} 
+                        className="glass-btn glass-btn-primary" 
+                        disabled={permission === 'read'}
+                        style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+                      >
+                        Reopen Folio <RotateCcw size={14} style={{ marginLeft: '4px' }} />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -979,7 +1684,7 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                 <button className="action-pill">SEND PAYMENT LINK</button>
                 <button className="action-pill" onClick={() => setActiveFolioTab('Itemized')}><Plus size={12} /> ADD CHARGE</button>
                 <button className="action-pill" onClick={() => setActiveFolioTab('Payments')}><CreditCard size={12} /> COLLECT PAYMENT</button>
-                <button onClick={() => window.print()} className="action-pill">PRINT</button>
+                <button onClick={handlePrintInvoice} className="action-pill"><Printer size={12} /> PRINT INVOICE</button>
               </div>
 
               {/* Subview Navigation Tabs (Image 1 style) */}
@@ -988,121 +1693,14 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                 <button onClick={() => setActiveFolioTab('Itemized')} className={`tab-item ${activeFolioTab === 'Itemized' ? 'active' : ''}`}>Itemized / Charges</button>
                 <button onClick={() => setActiveFolioTab('Payments')} className={`tab-item ${activeFolioTab === 'Payments' ? 'active' : ''}`}>Payments</button>
                 <button onClick={() => setActiveFolioTab('Guest Management')} className={`tab-item ${activeFolioTab === 'Guest Management' ? 'active' : ''}`}>Guest Management</button>
+                <button onClick={() => setActiveFolioTab('Deposits & Refunds')} className={`tab-item ${activeFolioTab === 'Deposits & Refunds' ? 'active' : ''}`}>Deposits & Refunds</button>
                 <button onClick={() => setActiveFolioTab('Documents')} className={`tab-item ${activeFolioTab === 'Documents' ? 'active' : ''}`}>Documents</button>
                 <button onClick={() => setActiveFolioTab('Audit Log')} className={`tab-item ${activeFolioTab === 'Audit Log' ? 'active' : ''}`}>Audit Log</button>
                 <button onClick={() => setActiveFolioTab('Notes')} className={`tab-item ${activeFolioTab === 'Notes' ? 'active' : ''}`}>Notes</button>
               </div>
 
               {/* TAB 1: SUMMARY DETAILS */}
-              {activeFolioTab === 'Summary' && (
-                <div className="glass-panel animate-fade-in" style={{ padding: '20px', background: '#fff' }}>
-                  {/* PRINT HEADER VISIBLE ONLY ON PRINT */}
-                  <div className="print-only" style={{ marginBottom: '30px', borderBottom: '2px solid #000', paddingBottom: '10px', textAlign: 'center' }}>
-                    <h1 style={{ margin: '0', fontSize: '1.5rem', fontWeight: 'bold' }}>{propertySettings?.name || 'Grand Hotel PMS'}</h1>
-                    <div style={{ fontSize: '0.9rem', color: '#333', marginTop: '4px' }}>
-                      {propertySettings?.address && <>{propertySettings.address}<br/></>}
-                      {propertySettings?.contact1 && <>Phone: {propertySettings.contact1} {propertySettings.contact2 ? `/ ${propertySettings.contact2}` : ''}<br/></>}
-                      {propertySettings?.email && <>Email: {propertySettings.email}<br/></>}
-                      {propertySettings?.gstOption === 'Enter GST' && propertySettings.gstNumber && <><strong>GSTIN: {propertySettings.gstNumber}</strong><br/></>}
-                    </div>
-                    <h2 style={{ marginTop: '16px', fontSize: '1.2rem', textTransform: 'uppercase' }}>Tax Invoice / Guest Folio</h2>
-                  </div>
-                  <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '16px' }}>Summary Details</h3>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left', color: 'var(--text-muted)' }}>
-                        <th style={{ padding: '10px' }}>DATE</th>
-                        <th style={{ padding: '10px' }}>ROOM</th>
-                        <th style={{ padding: '10px' }}>DESCRIPTION</th>
-                        <th style={{ padding: '10px' }}>TYPE</th>
-                        <th style={{ padding: '10px', textAlign: 'right' }}>NET</th>
-                        <th style={{ padding: '10px', textAlign: 'right' }}>TAX</th>
-                        <th style={{ padding: '10px', textAlign: 'right' }}>GROSS</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {folioData.entries.map(entry => (
-                        <tr key={entry.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                          <td style={{ padding: '10px' }}>{new Date(entry.created_at).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}</td>
-                          <td style={{ padding: '10px' }}>All rooms</td>
-                          <td style={{ padding: '10px' }}>{entry.description}</td>
-                          <td style={{ padding: '10px' }}>{entry.entry_type === 'Payment' ? 'CREDIT' : 'DEBIT'}</td>
-                          <td style={{ padding: '10px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>₹{parseFloat(entry.entry_type === 'Payment' ? entry.credit : entry.debit).toFixed(2)}</td>
-                          <td style={{ padding: '10px', textAlign: 'right', color: 'var(--text-muted)' }}>—</td>
-                          <td style={{ padding: '10px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 'bold' }}>
-                            ₹{parseFloat(entry.entry_type === 'Payment' ? entry.credit : entry.debit).toFixed(2)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '24px', borderTop: '2px solid #f1f5f9', paddingTop: '20px', marginTop: '20px' }}>
-                    <div>
-                      <h4 style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '10px' }}>Charges</h4>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', padding: '6px 0' }}>
-                        <span>SUBTOTAL (EX. TAX)</span>
-                        <strong>₹{parseFloat(folioData.summary.totalDebit).toFixed(2)}</strong>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', padding: '6px 0', borderTop: '1px solid #f1f5f9' }}>
-                        <span>TOTAL CHARGES</span>
-                        <strong>₹{parseFloat(folioData.summary.totalDebit).toFixed(2)}</strong>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h4 style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '10px' }}>Payments & Deposits</h4>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', padding: '6px 0' }}>
-                        <span>PAYMENTS RECEIVED</span>
-                        <strong className="text-success">₹{parseFloat(folioData.summary.totalCredit).toFixed(2)}</strong>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', padding: '6px 0', borderTop: '1px solid #f1f5f9' }}>
-                        <span>REFUNDS ISSUED</span>
-                        <strong className="text-info">₹0.00</strong>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', padding: '6px 0', borderTop: '1px solid #f1f5f9' }}>
-                        <span>DEPOSITS HELD</span>
-                        <strong>₹0.00 <span style={{ fontSize: '0.65rem', color: '#b45309', background: '#fef3c7', padding: '1px 4px', borderRadius: '3px' }}>MASTER</span></strong>
-                      </div>
-                    </div>
-
-                    <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', justifyContent: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#b91c1c', fontWeight: 'bold' }}>
-                        <AlertTriangle size={14} /> BALANCE DUE
-                      </div>
-                      <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#b91c1c', fontFamily: 'var(--font-mono)' }}>
-                        ₹{parseFloat(folioData.summary.balance).toFixed(2)}
-                      </div>
-                      <button 
-                        onClick={() => setActiveFolioTab('Payments')}
-                        className="glass-btn" 
-                        style={{ width: '100%', background: '#2563eb', color: '#fff', border: 'none', padding: '8px' }}
-                      >
-                        Collect payment <ChevronDown size={14} style={{ marginLeft: '4px' }} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Extend stay block */}
-                  <div className="no-print" style={{ borderTop: '1px solid #f1f5f9', paddingTop: '20px', marginTop: '20px' }}>
-                    <h4 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '12px' }}>Extend Stay / Modify Checkout Date</h4>
-                    <form onSubmit={handleModifyDates} style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                      <div style={{ flex: '1 1 200px' }}>
-                        <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>New Checkout Date & Time</label>
-                        <input 
-                          type="datetime-local" 
-                          className="glass-input" 
-                          value={newCheckOut ? newCheckOut.slice(0, 16) : ''} 
-                          onChange={(e) => setNewCheckOut(e.target.value)} 
-                        />
-                      </div>
-                      <button type="submit" className="glass-btn glass-btn-primary" style={{ padding: '10px 16px', height: '38px' }}>
-                        Update Checkout Date
-                      </button>
-                    </form>
-                  </div>
-                </div>
-              )}
+              {activeFolioTab === 'Summary' && renderSummaryTab()}
 
               {/* TAB 2: ITEMIZED CHARGES */}
               {activeFolioTab === 'Itemized' && (
@@ -1113,12 +1711,12 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                       <form onSubmit={handlePostCharge} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         <div>
                           <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Service Type</label>
-                          <select className="glass-input" value={chargeType} onChange={(e) => setChargeType(e.target.value)}>
+                          <CustomSelect className="glass-input" value={chargeType} onChange={(e) => setChargeType(e.target.value)}>
                             <option value="Food">Food / Room Service</option>
                             <option value="Laundry">Laundry Services</option>
                             <option value="Transport">Cab / Airport Transfer</option>
                             <option value="Misc">Miscellaneous Extra</option>
-                          </select>
+                          </CustomSelect>
                         </div>
                         <div>
                           <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Service Description</label>
@@ -1130,12 +1728,12 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                         </div>
                         <div>
                           <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Applicable Tax</label>
-                          <select className="glass-input" value={chargeTaxId} onChange={(e) => setChargeTaxId(e.target.value)}>
+                          <CustomSelect className="glass-input" value={chargeTaxId} onChange={(e) => setChargeTaxId(e.target.value)}>
                             <option value="">No Tax (Exempt)</option>
                             {taxes.map(tax => (
                               <option key={tax.id} value={tax.id}>{tax.name} ({tax.rate}%)</option>
                             ))}
-                          </select>
+                          </CustomSelect>
                         </div>
                         <button type="submit" className="glass-btn glass-btn-primary" disabled={permission === 'read'} style={{ marginTop: '8px' }}><PlusCircle size={16} /> Post Charge</button>
                       </form>
@@ -1198,17 +1796,29 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
 
                   {adjustEntry && (
                     <div style={{ marginTop: '20px', padding: '16px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '6px' }}>
-                      <h4 style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#b91c1c', marginBottom: '6px' }}>Reversal Authorization (Audited)</h4>
-                      <form onSubmit={handleAdjustReversal} style={{ display: 'flex', gap: '8px' }}>
+                      <h4 style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#b91c1c', marginBottom: '6px' }}>Reversal Authorization & Discount (Audited)</h4>
+                      <form onSubmit={handleAdjustReversal} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <input 
                           type="text" 
                           placeholder="Explain correction reason..." 
                           className="glass-input" 
+                          style={{ flex: 1, minWidth: '200px' }}
                           value={adjustReason}
                           onChange={(e) => setAdjustReason(e.target.value)}
                         />
-                        <button type="submit" className="glass-btn glass-btn-danger">Confirm</button>
-                        <button type="button" onClick={() => setAdjustEntry(null)} className="glass-btn">Cancel</button>
+                        <input 
+                          type="number" 
+                          min="0"
+                          max="100"
+                          step="0.1"
+                          placeholder="Discount % (Optional)" 
+                          className="glass-input" 
+                          style={{ width: '160px' }}
+                          value={discountPercent}
+                          onChange={(e) => setDiscountPercent(e.target.value)}
+                        />
+                        <button type="submit" className="glass-btn glass-btn-danger">Confirm Adjustment</button>
+                        <button type="button" onClick={() => { setAdjustEntry(null); setDiscountPercent(''); setAdjustReason(''); }} className="glass-btn">Cancel</button>
                       </form>
                     </div>
                   )}
@@ -1273,10 +1883,10 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                       amount: data.amount,
                       currency: data.currency,
                       order_id: data.orderId,
-                      name: 'Hotel PMS',
-                      description: `Res: ${selectedRes.reservation_number}`,
+                      name: propertySettings?.name || 'Grand Hotel PMS',
+                      description: `Payment for Res #${selectedRes.reservation_number}`,
                       prefill: { name: selectedRes.guest_name, contact: selectedRes.guest_mobile },
-                      theme: { color: '#6366f1' },
+                      theme: { color: '#0f172a' },
                       handler: async (resp) => {
                         try {
                           await axios.post('/api/razorpay/verify', {
@@ -1287,11 +1897,33 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                             amount: balance,
                           }, { headers: { Authorization: `Bearer ${t}` } });
                           toast.success(`✅ ₹${balance} collected via Razorpay`);
-                          fetchFolioData(folioData.folio?.id);
+                          openFolio(selectedRes);
                         } catch (err) { toast.error(err.response?.data?.error || 'Verification failed'); }
                       },
                     }).open();
                   } catch (err) { toast.error(err.response?.data?.error || 'Razorpay init failed'); }
+                };
+
+                const handleGeneratePaymentLink = async () => {
+                  if (balance <= 0) return toast.error('No outstanding balance');
+                  setGeneratingLink(true);
+                  setPaymentLinkData(null);
+                  try {
+                    const t = localStorage.getItem('pms_token');
+                    const { data } = await axios.post('/api/razorpay/payment-link', {
+                      folio_id: folioData.folio?.id,
+                      amount_paise: Math.round(balance * 100),
+                      description: `Hotel Folio Payment for Res #${selectedRes.reservation_number}`,
+                      guest_name: selectedRes.guest_name,
+                      guest_mobile: selectedRes.guest_mobile
+                    }, { headers: { Authorization: `Bearer ${t}` } });
+                    setPaymentLinkData(data);
+                    toast.success('Razorpay Payment Link generated!');
+                  } catch (err) {
+                    toast.error('Failed to create payment link');
+                  } finally {
+                    setGeneratingLink(false);
+                  }
                 };
 
                 return (
@@ -1312,12 +1944,12 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                       <form onSubmit={handlePostPayment} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         <div>
                           <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '5px' }}>Payment Mode</label>
-                          <select className="glass-input" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
+                          <CustomSelect className="glass-input" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
                             <option value="Cash">💵 Cash</option>
                             <option value="UPI">📱 UPI / QR Code</option>
                             <option value="Card">💳 Card / POS Terminal</option>
                             <option value="Bank Transfer">🏦 Bank Wire Transfer</option>
-                          </select>
+                          </CustomSelect>
                         </div>
                         <div>
                           <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '5px' }}>Amount (₹)</label>
@@ -1339,28 +1971,74 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                         <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
                       </div>
 
-                      {/* Razorpay button */}
-                      <button
-                        onClick={handleRazorpay}
-                        disabled={permission === 'read' || balance <= 0}
-                        style={{
-                          padding: '14px 18px', borderRadius: 'var(--r-md)', border: 'none',
-                          background: balance > 0 ? 'linear-gradient(135deg,#072654,#1a3a8f)' : '#e2e8f0',
-                          cursor: balance > 0 ? 'pointer' : 'not-allowed',
-                          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
-                          boxShadow: balance > 0 ? '0 4px 14px rgba(7,38,84,0.3)' : 'none',
-                          transition: 'transform 0.15s, box-shadow 0.15s',
-                        }}
-                        onMouseEnter={e => { if (balance > 0) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 20px rgba(7,38,84,0.4)'; }}}
-                        onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = balance > 0 ? '0 4px 14px rgba(7,38,84,0.3)' : 'none'; }}
-                      >
-                        <span style={{ color: balance > 0 ? '#fff' : '#94a3b8', fontWeight: 800, fontSize: '0.95rem' }}>
-                          💳 Pay ₹{Number(balance).toLocaleString('en-IN')} Online
-                        </span>
-                        <span style={{ color: balance > 0 ? 'rgba(255,255,255,0.55)' : '#cbd5e1', fontSize: '0.7rem' }}>
-                          Razorpay · UPI · Cards · NetBanking · Wallets
-                        </span>
-                      </button>
+                      {/* Razorpay buttons */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <button
+                          onClick={handleRazorpay}
+                          disabled={permission === 'read' || balance <= 0}
+                          style={{
+                            padding: '14px 18px', borderRadius: 'var(--r-md)', border: 'none',
+                            background: balance > 0 ? 'linear-gradient(135deg,#072654,#1a3a8f)' : '#e2e8f0',
+                            cursor: balance > 0 ? 'pointer' : 'not-allowed',
+                            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px',
+                            boxShadow: balance > 0 ? '0 4px 14px rgba(7,38,84,0.3)' : 'none',
+                            transition: 'transform 0.15s, box-shadow 0.15s',
+                          }}
+                          onMouseEnter={e => { if (balance > 0) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 20px rgba(7,38,84,0.4)'; }}}
+                          onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = balance > 0 ? '0 4px 14px rgba(7,38,84,0.3)' : 'none'; }}
+                        >
+                          <span style={{ color: balance > 0 ? '#fff' : '#94a3b8', fontWeight: 800, fontSize: '0.95rem' }}>
+                            💳 Pay ₹{Number(balance).toLocaleString('en-IN')} Online
+                          </span>
+                          <span style={{ color: balance > 0 ? 'rgba(255,255,255,0.55)' : '#cbd5e1', fontSize: '0.7rem' }}>
+                            Razorpay · UPI · Cards · NetBanking · Wallets
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleGeneratePaymentLink}
+                          disabled={permission === 'read' || balance <= 0 || generatingLink}
+                          className="glass-btn"
+                          style={{
+                            padding: '12px', borderRadius: 'var(--r-md)', fontWeight: 700, fontSize: '0.85rem',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                            borderColor: '#7c3aed', color: '#7c3aed', background: '#f5f3ff'
+                          }}
+                        >
+                          🔗 {generatingLink ? 'Generating...' : 'Generate Razorpay Payment Link'}
+                        </button>
+
+                        {paymentLinkData && (
+                          <div style={{ marginTop: '10px', padding: '14px', background: '#f5f3ff', border: '1.5px dashed #c084fc', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#6b21a8' }}>
+                              ✅ Payment Link Generated Successfully!
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <input
+                                readOnly
+                                className="glass-input"
+                                value={paymentLinkData.short_url}
+                                style={{ fontSize: '0.8rem', background: '#fff', color: '#1e293b' }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(paymentLinkData.short_url);
+                                  toast.success('Link copied to clipboard!');
+                                }}
+                                className="btn btn-default btn-sm"
+                                style={{ whiteSpace: 'nowrap' }}
+                              >
+                                Copy Link
+                              </button>
+                            </div>
+                            <a href={paymentLinkData.short_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.72rem', color: '#7c3aed', fontWeight: 600, textDecoration: 'underline' }}>
+                              Open payment page manually &rarr;
+                            </a>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     {/* ── Right: receipts ── */}
@@ -1377,12 +2055,12 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                             <h4 style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#1d4ed8', marginBottom: '6px' }}>Edit Recorded Payment</h4>
                             <form onSubmit={handleEditPayment} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                               <div style={{ display: 'flex', gap: '8px' }}>
-                                <select className="glass-input" value={editPaymentMethod} onChange={e => setEditPaymentMethod(e.target.value)} style={{ flex: 1 }}>
+                                <CustomSelect className="glass-input" value={editPaymentMethod} onChange={e => setEditPaymentMethod(e.target.value)} style={{ flex: 1 }}>
                                   <option value="Cash">💵 Cash</option>
                                   <option value="UPI">📱 UPI</option>
                                   <option value="Card">💳 Card</option>
                                   <option value="Bank Transfer">🏦 Bank Wire</option>
-                                </select>
+                                </CustomSelect>
                                 <input type="number" step="0.01" min="0.01" className="glass-input" value={editPaymentAmt} onChange={e => setEditPaymentAmt(e.target.value)} style={{ flex: 1 }} />
                               </div>
                               <input type="text" className="glass-input" value={editPaymentDesc} onChange={e => setEditPaymentDesc(e.target.value)} placeholder="Description/Remarks" />
@@ -1398,52 +2076,66 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                           <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.82rem', background: '#f8fafc', borderRadius: 'var(--r-md)', border: '1.5px dashed var(--border)' }}>
                             No payments collected yet
                           </div>
-                        ) : payments.map(entry => (
-                          <div key={entry.id} style={{ padding: '12px 14px', background: entry.is_voided ? '#fef2f2' : '#fafffe', border: `1.5px solid ${entry.is_voided ? '#fee2e2' : '#a7f3d0'}`, borderLeft: `4px solid ${methodColor(entry.payment_method)}`, borderRadius: 'var(--r-sm)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', opacity: entry.is_voided ? 0.6 : 1 }}>
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: '0.9rem', color: entry.is_voided ? '#94a3b8' : '#059669', display: 'flex', alignItems: 'center', gap: '8px', textDecoration: entry.is_voided ? 'line-through' : 'none' }}>
-                                ₹{Number(entry.credit).toLocaleString('en-IN')}
-                                {entry.is_voided === 1 && (
-                                  <span className="badge badge-danger" style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px' }}>VOIDED</span>
-                                )}
-                                {!entry.is_voided && (
-                                  <div style={{ display: 'flex', gap: '4px' }}>
-                                    <button 
-                                      onClick={() => {
-                                        setEditingPayment(entry);
-                                        setEditPaymentDesc(entry.description);
-                                        setEditPaymentAmt(entry.credit);
-                                        setEditPaymentMethod(entry.payment_method);
-                                      }} 
-                                      className="glass-btn" 
-                                      style={{ padding: '2px', border: 'none', background: 'none' }}
-                                      title="Edit Payment"
-                                    >
-                                      <Pencil size={12} className="text-primary" />
-                                    </button>
-                                    <button 
-                                      onClick={() => handleVoidEntry(entry.id)} 
-                                      className="glass-btn" 
-                                      style={{ padding: '2px', border: 'none', background: 'none' }}
-                                      title="Void / Cancel Payment"
-                                    >
-                                      <Trash2 size={12} className="text-danger" />
-                                    </button>
+                        ) : (
+                          <div style={{ position: 'relative', paddingLeft: '20px', borderLeft: '2px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px', margin: '12px 0 12px 10px' }}>
+                            {payments.map(entry => (
+                              <div key={entry.id} style={{ position: 'relative' }}>
+                                {/* Timeline Dot */}
+                                <div style={{
+                                  position: 'absolute', left: '-27px', top: '14px',
+                                  width: '12px', height: '12px', borderRadius: '50%',
+                                  background: entry.is_voided ? '#ef4444' : methodColor(entry.payment_method),
+                                  border: '2px solid #fff'
+                                }} />
+                                
+                                <div style={{ padding: '12px 14px', background: entry.is_voided ? '#fef2f2' : '#fafffe', border: `1.5px solid ${entry.is_voided ? '#fee2e2' : '#a7f3d0'}`, borderRadius: 'var(--r-sm)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', opacity: entry.is_voided ? 0.6 : 1 }}>
+                                  <div>
+                                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: entry.is_voided ? '#94a3b8' : '#059669', display: 'flex', alignItems: 'center', gap: '8px', textDecoration: entry.is_voided ? 'line-through' : 'none' }}>
+                                      ₹{Number(entry.credit).toLocaleString('en-IN')}
+                                      {entry.is_voided === 1 && (
+                                        <span className="badge badge-danger" style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '4px' }}>VOIDED</span>
+                                      )}
+                                      {!entry.is_voided && (
+                                        <div style={{ display: 'flex', gap: '4px' }}>
+                                          <button 
+                                            onClick={() => {
+                                              setEditingPayment(entry);
+                                              setEditPaymentDesc(entry.description);
+                                              setEditPaymentAmt(entry.credit);
+                                              setEditPaymentMethod(entry.payment_method);
+                                            }} 
+                                            className="glass-btn" 
+                                            style={{ padding: '2px', border: 'none', background: 'none' }}
+                                            title="Edit Payment"
+                                          >
+                                            <Pencil size={12} className="text-primary" />
+                                          </button>
+                                          <button 
+                                            onClick={() => handleVoidEntry(entry.id)} 
+                                            className="glass-btn" 
+                                            style={{ padding: '2px', border: 'none', background: 'none' }}
+                                            title="Void / Cancel Payment"
+                                          >
+                                            <Trash2 size={12} className="text-danger" />
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px', textDecoration: entry.is_voided ? 'line-through' : 'none' }}>{entry.description} · {entry.created_by}</div>
                                   </div>
-                                )}
+                                  <div style={{ textAlign: 'right' }}>
+                                    <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: '8px', background: `${methodColor(entry.payment_method)}18`, color: methodColor(entry.payment_method) }}>
+                                      {entry.payment_method}
+                                    </span>
+                                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '3px' }}>
+                                      {new Date(entry.created_at).toLocaleDateString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
-                              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px', textDecoration: entry.is_voided ? 'line-through' : 'none' }}>{entry.description} · {entry.created_by}</div>
-                            </div>
-                            <div style={{ textAlign: 'right' }}>
-                              <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: '8px', background: `${methodColor(entry.payment_method)}18`, color: methodColor(entry.payment_method) }}>
-                                {entry.payment_method}
-                              </span>
-                              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '3px' }}>
-                                {new Date(entry.created_at).toLocaleDateString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}
-                              </div>
-                            </div>
+                            ))}
                           </div>
-                        ))}
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1613,7 +2305,7 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                           </div>
                           <div>
                             <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Govt ID Type</label>
-                            <select 
+                            <CustomSelect 
                               className="glass-input" 
                               value={editGuestIdType} 
                               onChange={(e) => setEditGuestIdType(e.target.value)}
@@ -1622,7 +2314,7 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                               <option value="Driving License">Driving License</option>
                               <option value="Passport">Passport</option>
                               <option value="Voter ID">Voter ID</option>
-                            </select>
+                            </CustomSelect>
                           </div>
                           <div>
                             <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>ID Document Number</label>
@@ -1645,28 +2337,52 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
               })()}
 
               {/* TAB 5: DOCUMENTS UPLOADS */}
-              {activeFolioTab === 'Documents' && (
-                <div className="glass-panel animate-fade-in" style={{ padding: '20px', background: '#fff' }}>
-                  <h3 style={{ fontSize: '0.95rem', fontWeight: 'bold', marginBottom: '16px' }}>Mandatory Compliance Uploads</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', textAlign: 'center' }}>
-                    <div style={{ border: '1px dashed #cbd5e1', padding: '24px 12px', borderRadius: '6px' }}>
+              {activeFolioTab === 'Documents' && (() => {
+                const guestData = folioData.guest || {};
+                const handleUpload = async (e, type) => {
+                  const file = e.target.files[0];
+                  if (!file) return;
+                  const formData = new FormData();
+                  formData.append(type, file);
+                  try {
+                    const token = localStorage.getItem('pms_token');
+                    await axios.post(`/api/guests/${guestData.id}/documents`, formData, {
+                      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }
+                    });
+                    toast.success('Document uploaded');
+                    openFolio(selectedRes);
+                  } catch (err) { toast.error('Upload failed'); }
+                };
+
+                const DocCard = ({ title, type, url, desc }) => (
+                  <div style={{ border: '1px dashed #cbd5e1', padding: '16px 12px', borderRadius: '6px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    {url ? (
+                      <div style={{ marginBottom: '8px', cursor: 'pointer' }} onClick={() => window.open(url, '_blank')}>
+                        <img src={url} alt={title} style={{ height: '80px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #e2e8f0' }} />
+                      </div>
+                    ) : (
                       <ImageIcon size={32} className="text-muted" style={{ marginBottom: '8px' }} />
-                      <strong>Guest Face Photo</strong>
-                      <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>Webcam verified check-in frame</p>
-                    </div>
-                    <div style={{ border: '1px dashed #cbd5e1', padding: '24px 12px', borderRadius: '6px' }}>
-                      <ImageIcon size={32} className="text-muted" style={{ marginBottom: '8px' }} />
-                      <strong>Govt ID Front Scan</strong>
-                      <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>Document front view snapshot</p>
-                    </div>
-                    <div style={{ border: '1px dashed #cbd5e1', padding: '24px 12px', borderRadius: '6px' }}>
-                      <ImageIcon size={32} className="text-muted" style={{ marginBottom: '8px' }} />
-                      <strong>Govt ID Back Scan</strong>
-                      <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>Document back address snapshot</p>
+                    )}
+                    <strong style={{ fontSize: '0.85rem' }}>{title}</strong>
+                    <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px', marginBottom: '12px' }}>{desc}</p>
+                    <label className="btn btn-sm" style={{ cursor: 'pointer', background: 'var(--surface-2)', border: '1px solid var(--border)', fontSize: '0.75rem', padding: '4px 8px' }}>
+                      Upload / Modify
+                      <input type="file" style={{ display: 'none' }} accept="image/*" onChange={e => handleUpload(e, type)} />
+                    </label>
+                  </div>
+                );
+
+                return (
+                  <div className="glass-panel animate-fade-in" style={{ padding: '20px', background: '#fff' }}>
+                    <h3 style={{ fontSize: '0.95rem', fontWeight: 'bold', marginBottom: '16px' }}>Mandatory Compliance Uploads</h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', textAlign: 'center' }}>
+                      <DocCard title="Guest Face Photo" type="photo" url={guestData.photo_url} desc="Webcam verified check-in frame" />
+                      <DocCard title="Govt ID Front Scan" type="idFront" url={guestData.id_front_url} desc="Document front view snapshot" />
+                      <DocCard title="Govt ID Back Scan" type="idBack" url={guestData.id_back_url} desc="Document back address snapshot" />
                     </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* TAB 6: AUDIT LOG */}
               {activeFolioTab === 'Audit Log' && (
@@ -1708,6 +2424,100 @@ export default function Billing({ user, permission, preselectedRes, onClearPrese
                 <div className="glass-panel animate-fade-in" style={{ padding: '20px', background: '#fff' }}>
                   <h3 style={{ fontSize: '0.95rem', fontWeight: 'bold', marginBottom: '12px' }}>Folio Operations Remarks</h3>
                   <textarea className="glass-input" rows="4" value={selectedRes.remarks || ''} readOnly placeholder="Remarks entered at reservation creation..."></textarea>
+                </div>
+              )}
+
+              {/* TAB 8: DEPOSITS & REFUNDS */}
+              {activeFolioTab === 'Deposits & Refunds' && (
+                <div className="glass-panel animate-fade-in" style={{ padding: '20px', background: '#fff' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+                    
+                    {/* Collect Security Deposit Panel */}
+                    <div>
+                      <h3 style={{ fontSize: '0.95rem', fontWeight: 'bold', marginBottom: '12px' }}>Collect Security Deposit</h3>
+                      <form onSubmit={handlePostDeposit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div>
+                          <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Deposit Amount (₹)</label>
+                          <input 
+                            type="number" 
+                            className="glass-input" 
+                            placeholder="Enter deposit amount e.g. 2000" 
+                            value={depositAmount} 
+                            onChange={(e) => setDepositAmount(e.target.value)}
+                            min="0.01" 
+                            step="0.01" 
+                            required 
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Payment Method</label>
+                          <CustomSelect className="glass-input" value={depositMethod} onChange={(e) => setDepositMethod(e.target.value)}>
+                            <option value="UPI">UPI</option>
+                            <option value="Cash">Cash</option>
+                            <option value="Card">Card</option>
+                            <option value="Bank Transfer">Bank Transfer</option>
+                          </CustomSelect>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Description / Remarks</label>
+                          <input 
+                            type="text" 
+                            className="glass-input" 
+                            placeholder="Key deposit, damage deposit, etc." 
+                            value={depositDesc} 
+                            onChange={(e) => setDepositDesc(e.target.value)} 
+                          />
+                        </div>
+                        <button type="submit" className="glass-btn glass-btn-primary" style={{ alignSelf: 'flex-start' }}>
+                          Collect Deposit
+                        </button>
+                      </form>
+                    </div>
+
+                    {/* Request Refund Panel */}
+                    <div>
+                      <h3 style={{ fontSize: '0.95rem', fontWeight: 'bold', marginBottom: '12px' }}>Request Refund</h3>
+                      <form onSubmit={handleRequestRefund} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div>
+                          <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Refund Amount (₹)</label>
+                          <input 
+                            type="number" 
+                            className="glass-input" 
+                            placeholder="Enter refund amount" 
+                            value={refundAmount} 
+                            onChange={(e) => setRefundAmount(e.target.value)}
+                            min="0.01" 
+                            step="0.01" 
+                            required 
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Payment Method</label>
+                          <CustomSelect className="glass-input" value={refundMethod} onChange={(e) => setRefundMethod(e.target.value)}>
+                            <option value="UPI">UPI</option>
+                            <option value="Cash">Cash</option>
+                            <option value="Card">Card</option>
+                            <option value="Bank Transfer">Bank Transfer</option>
+                          </CustomSelect>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>Reason for Refund</label>
+                          <textarea 
+                            className="glass-input" 
+                            rows="2" 
+                            placeholder="Reason for guest refund payout..." 
+                            value={refundReason} 
+                            onChange={(e) => setRefundReason(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <button type="submit" className="glass-btn" style={{ alignSelf: 'flex-start', background: '#e2e8f0', color: '#475569', border: 'none' }}>
+                          Submit Refund Request
+                        </button>
+                      </form>
+                    </div>
+
+                  </div>
                 </div>
               )}
             </>

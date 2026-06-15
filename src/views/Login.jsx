@@ -3,7 +3,7 @@ import axios from 'axios';
 import { Eye, EyeOff, LogIn, ShieldAlert } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-export default function Login({ onLoginSuccess }) {
+export default function Login({ onLoginSuccess, propertySettings }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd]   = useState(false);
@@ -63,14 +63,22 @@ export default function Login({ onLoginSuccess }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           <div style={{
             width: '52px', height: '52px',
-            background: 'linear-gradient(135deg, #6366f1, #818cf8)',
+            background: propertySettings?.logo_url ? 'rgba(255,255,255,0.04)' : 'linear-gradient(135deg, #6366f1, #818cf8)',
+            border: propertySettings?.logo_url ? '1px solid rgba(255,255,255,0.09)' : 'none',
             borderRadius: '14px', display: 'flex', alignItems: 'center',
             justifyContent: 'center', fontSize: '1.6rem',
-            boxShadow: '0 8px 24px rgba(99,102,241,0.4)',
-          }}>🏨</div>
+            boxShadow: propertySettings?.logo_url ? 'none' : '0 8px 24px rgba(99,102,241,0.4)',
+            overflow: 'hidden',
+          }}>
+            {propertySettings?.logo_url ? (
+              <img src={propertySettings.logo_url} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            ) : (
+              '🏨'
+            )}
+          </div>
           <div>
             <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', letterSpacing: '-0.3px' }}>
-              Antigravity PMS
+              {propertySettings?.name || 'Akhil Residency'}
             </div>
             <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>
               Property Management System
@@ -113,12 +121,20 @@ export default function Login({ onLoginSuccess }) {
           <style>{`@media(min-width:901px){#login-mobile-brand{display:none!important}}`}</style>
           <div style={{
             width: '56px', height: '56px',
-            background: 'linear-gradient(135deg, #6366f1, #818cf8)',
+            background: propertySettings?.logo_url ? 'rgba(255,255,255,0.04)' : 'linear-gradient(135deg, #6366f1, #818cf8)',
+            border: propertySettings?.logo_url ? '1px solid rgba(255,255,255,0.09)' : 'none',
             borderRadius: '16px', display: 'inline-flex', alignItems: 'center',
             justifyContent: 'center', fontSize: '1.8rem', marginBottom: '14px',
-            boxShadow: '0 8px 24px rgba(99,102,241,0.4)',
-          }}>🏨</div>
-          <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#fff' }}>Antigravity PMS</div>
+            boxShadow: propertySettings?.logo_url ? 'none' : '0 8px 24px rgba(99,102,241,0.4)',
+            overflow: 'hidden',
+          }}>
+            {propertySettings?.logo_url ? (
+              <img src={propertySettings.logo_url} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            ) : (
+              '🏨'
+            )}
+          </div>
+          <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#fff' }}>{propertySettings?.name || 'Akhil Residency'}</div>
           <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)', marginTop: '4px' }}>Property Management System</div>
         </div>
 

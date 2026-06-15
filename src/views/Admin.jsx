@@ -24,6 +24,7 @@ export default function Admin({ user, permission }) {
   const [gstNumber, setGstNumber] = useState('');
   const [taxCalculationMode, setTaxCalculationMode] = useState('Exempt');
   const [defaultAccommodationTaxId, setDefaultAccommodationTaxId] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
 
   // Integrations State
   const [tgToken, setTgToken] = useState('');
@@ -76,6 +77,9 @@ export default function Admin({ user, permission }) {
   const [newUserDiscountLimit, setNewUserDiscountLimit] = useState('0');
   const [editingUser, setEditingUser] = useState(null);
 
+  // Refund Requests State
+  const [refundRequests, setRefundRequests] = useState([]);
+
 
   useEffect(() => {
     const handleResize = () => {
@@ -90,14 +94,13 @@ export default function Admin({ user, permission }) {
       const token = localStorage.getItem('pms_token');
       if (!token) return;
 
-      const [rmRes, plRes, typeRes, taxRes, payRes, propRes, gateRes, permRes] = await Promise.all([
+      const [rmRes, plRes, typeRes, taxRes, payRes, propRes, permRes] = await Promise.all([
         axios.get('/api/rooms', { headers: { Authorization: `Bearer ${token}` } }),
         axios.get('/api/rate-plans', { headers: { Authorization: `Bearer ${token}` } }),
         axios.get('/api/room-types', { headers: { Authorization: `Bearer ${token}` } }),
         axios.get('/api/taxes', { headers: { Authorization: `Bearer ${token}` } }),
         axios.get('/api/payment-methods', { headers: { Authorization: `Bearer ${token}` } }),
         axios.get('/api/property', { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get('/api/gateway', { headers: { Authorization: `Bearer ${token}` } }),
         axios.get('/api/permissions', { headers: { Authorization: `Bearer ${token}` } })
       ]);
 
@@ -116,6 +119,22 @@ export default function Admin({ user, permission }) {
         setStaffUsers([]); // Non-admin roles won't have access
       }
 
+      // Load refund requests (Admin/Manager only)
+      if (['Admin', 'Manager'].includes(user.role)) {
+        try {
+          const refundRes = await axios.get('/api/refunds', { headers: { Authorization: `Bearer ${token}` } });
+          setRefundRequests(refundRes.data);
+        } catch (err) {
+          console.error('Failed to load refund requests', err);
+        }
+        try {
+          const approvalsRes = await axios.get('/api/approvals', { headers: { Authorization: `Bearer ${token}` } });
+          setApprovalRequests(approvalsRes.data);
+        } catch (err) {
+          console.error('Failed to load approval requests', err);
+        }
+      }
+
       // Load property configs
       if (propRes.data) {
         setPropertyName(propRes.data.name || '');
@@ -131,16 +150,54 @@ export default function Admin({ user, permission }) {
         setTgChatId(propRes.data.tgChatId || '');
         setWaToken(propRes.data.waToken || '');
         setWaPhoneId(propRes.data.waPhoneId || '');
-      }
-
-      // Load gateway configs
-      if (gateRes.data) {
-        setGatewayMerchantId(gateRes.data.merchantId || '');
-        setGatewayVpa(gateRes.data.vpa || '');
-        setGatewaySandbox(gateRes.data.sandbox || 'Yes');
+        setLogoUrl(propRes.data.logo_url || '');
       }
     } catch (err) {
       toast.error('Failed to load masters registries');
+    }
+  };
+
+  const handleApproveRefund = async (id) => {
+    try {
+      const token = localStorage.getItem('pms_token');
+      await axios.post(`/api/refunds/${id}/approve`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      toast.success('Refund request approved successfully!');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to approve refund request');
+    }
+  };
+
+  const handleRejectRefund = async (id) => {
+    try {
+      const token = localStorage.getItem('pms_token');
+      await axios.post(`/api/refunds/${id}/reject`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      toast.success('Refund request rejected successfully');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to reject refund request');
+    }
+  };
+
+  const handleApproveApprovalRequest = async (id) => {
+    try {
+      const token = localStorage.getItem('pms_token');
+      await axios.post(`/api/approvals/${id}/approve`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      toast.success('Approval request approved successfully!');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to approve request');
+    }
+  };
+
+  const handleRejectApprovalRequest = async (id) => {
+    try {
+      const token = localStorage.getItem('pms_token');
+      await axios.post(`/api/approvals/${id}/reject`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      toast.success('Approval request rejected');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to reject request');
     }
   };
 
@@ -149,6 +206,29 @@ export default function Admin({ user, permission }) {
       fetchData();
     }
   }, [isMobile]);
+
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (permission === 'read') return toast.error('Permission Denied: Read-only access');
+    const formData = new FormData();
+    formData.append('logo', file);
+    try {
+      const token = localStorage.getItem('pms_token');
+      const res = await axios.post('/api/property/logo', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          Authorization: `Bearer ${token}`
+        }
+      });
+      toast.success('Logo uploaded successfully');
+      setLogoUrl(res.data.logo_url);
+      fetchData();
+      if (onSettingsUpdated) onSettingsUpdated();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to upload logo');
+    }
+  };
 
   const savePropertyDetails = async (e) => {
     e.preventDefault();
@@ -168,6 +248,7 @@ export default function Admin({ user, permission }) {
       }, { headers: { Authorization: `Bearer ${token}` } });
       toast.success('Property settings updated successfully');
       fetchData();
+      if (onSettingsUpdated) onSettingsUpdated();
     } catch (err) {
       toast.error('Failed to update property details');
     }
@@ -524,21 +605,23 @@ export default function Admin({ user, permission }) {
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div>
-        <h1 style={{ fontSize: '1.8rem', fontWeight: '800' }}>Admin Configuration</h1>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Masters, rate plans, taxes & gateways settings</p>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Admin Configuration</h1>
+          <p className="page-subtitle">Masters, rate plans, taxes &amp; gateway settings</p>
+        </div>
       </div>
 
       {/* Admin configuration subtabs */}
-      <div className="tab-strip no-print">
-        <button onClick={() => setActiveSubTab('property')} className={`tab-item ${activeSubTab === 'property' ? 'active' : ''}`}><Landmark size={16} /> Property & Taxes</button>
-        <button onClick={() => setActiveSubTab('rooms')} className={`tab-item ${activeSubTab === 'rooms' ? 'active' : ''}`}><Layers size={16} /> Room Categories</button>
-        <button onClick={() => setActiveSubTab('plans')} className={`tab-item ${activeSubTab === 'plans' ? 'active' : ''}`}><Tag size={16} /> Rate Packages</button>
-        <button onClick={() => setActiveSubTab('payments')} className={`tab-item ${activeSubTab === 'payments' ? 'active' : ''}`}><Landmark size={16} /> Payments</button>
+      <div className="filter-pills no-print" style={{ flexWrap: 'wrap' }}>
+        <button onClick={() => setActiveSubTab('property')} className={`filter-pill ${activeSubTab === 'property' ? 'active' : ''}`}><Landmark size={14} /> Property &amp; Taxes</button>
+        <button onClick={() => setActiveSubTab('rooms')} className={`filter-pill ${activeSubTab === 'rooms' ? 'active' : ''}`}><Layers size={14} /> Room Categories</button>
+        <button onClick={() => setActiveSubTab('plans')} className={`filter-pill ${activeSubTab === 'plans' ? 'active' : ''}`}><Tag size={14} /> Rate Packages</button>
+        <button onClick={() => setActiveSubTab('payments')} className={`filter-pill ${activeSubTab === 'payments' ? 'active' : ''}`}><Landmark size={14} /> Payments</button>
         {user.role === 'Admin' && (
           <>
-            <button onClick={() => setActiveSubTab('staff')} className={`tab-item ${activeSubTab === 'staff' ? 'active' : ''}`}><Users size={16} /> Staff Users</button>
-            <button onClick={() => setActiveSubTab('rbac')} className={`tab-item ${activeSubTab === 'rbac' ? 'active' : ''}`}><ShieldAlert size={16} /> Role Permissions</button>
+            <button onClick={() => setActiveSubTab('staff')} className={`filter-pill ${activeSubTab === 'staff' ? 'active' : ''}`}><Users size={14} /> Staff Users</button>
+            <button onClick={() => setActiveSubTab('rbac')} className={`filter-pill ${activeSubTab === 'rbac' ? 'active' : ''}`}><ShieldAlert size={14} /> Role Permissions</button>
           </>
         )}
       </div>
@@ -560,6 +643,15 @@ export default function Admin({ user, permission }) {
               <div>
                 <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Property Name</label>
                 <input type="text" className="glass-input" value={propertyName} onChange={(e) => setPropertyName(e.target.value)} />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Hotel Logo (PNG)</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '4px' }}>
+                  {logoUrl && (
+                    <img src={logoUrl} alt="Hotel Logo" style={{ width: '40px', height: '40px', objectFit: 'contain', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '2px', background: '#f8fafc' }} />
+                  )}
+                  <input type="file" accept="image/png" onChange={handleLogoUpload} style={{ fontSize: '0.8rem' }} />
+                </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
@@ -1056,6 +1148,7 @@ export default function Admin({ user, permission }) {
                   { id: 'rooms', label: 'Room Board / Inventory' },
                   { id: 'guests', label: 'Guest CRM Directory' },
                   { id: 'billing', label: 'Folio Registry & Billing' },
+                  { id: 'transactions', label: 'Money Manager (Ledger)' },
                   { id: 'chat', label: 'Comms Desk (WhatsApp)' },
                   { id: 'reports', label: 'Analytics Reports' },
                   { id: 'admin', label: 'Config Masters (Admin)' },
@@ -1122,7 +1215,6 @@ export default function Admin({ user, permission }) {
           </div>
         </div>
       )}
-
     </div>
   );
 }
